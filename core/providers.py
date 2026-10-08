@@ -49,12 +49,12 @@ class AIProvider(ABC):
 
     # -- 인증 ---------------------------------------------------------------
     def is_available(self) -> bool:
-        return bool(self.cli_path and os.path.exists(self.cli_path)) or bool(self._read_secret())
+        return bool(self.cli_path and os.path.exists(self.cli_path)) or bool(self._read_secret(self.secret_name))
 
     def auth_status(self) -> tuple[bool, str]:
         if self.cli_path and os.path.exists(self.cli_path):
             return True, "로컬 CLI 인증 사용 가능"
-        if self._read_secret():
+        if self._read_secret(self.secret_name):
             return True, f"st.secrets의 {self.secret_name} 사용"
         return False, f"인증 없음 — 로컬 CLI 또는 secrets의 {self.secret_name} 필요"
 
