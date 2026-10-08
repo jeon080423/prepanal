@@ -3,39 +3,36 @@
 설문 설계 → 페르소나 설계 → 분포 학습 → 가상 응답 생성 → 결과
 5단계 마법사형 Streamlit 앱.
 
-방법론 (정직한 고지):
-- GPU 파인튜닝이 아님. 분포 학습(경험분포 추출) + 페르소나 시뮬레이션(LLM) 방식.
-- 선택형 문항은 Prolific 2026 방식: 보기별 선택 확률분포를 추출 후 샘플링.
+아키텍처: 이 파일은 렌더링만 담당한다. 비즈니스 로직은 core/ 패키지의
+서비스(QuestionnaireService·LearningService·GenerationService·ExportService)가
+처리하고, 상태 접근은 Store 인터페이스(SessionStore)를 통한다.
 """
 
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-import synth
-from synth import (
-    DEFAULT_PERSONA,
-    DISCLAIMER,
-    LIKERT_OPTIONS,
-    METHODOLOGY_NOTE,
-    QUESTION_TYPES,
-    learn_distributions,
-    new_question_id,
-    question_summary,
-)
-from providers import PROVIDERS, auth_status
-
-BASE_DIR = Path(__file__).parent
-SAMPLE_Q_PATH = BASE_DIR / "samples" / "sample_questionnaire.json"
-SAMPLE_XLSX_PATH = BASE_DIR / "samples" / "sample_real_data.xlsx"
+from config import (APP_SUBTITLE, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
+                    METHODOLOGY_NOTE, SAMPLE_XLSX_PATH)
+from core import (QUESTION_TYPE_REGISTRY, ExportService, GenerationService,
+                  LearningService, QuestionnaireService, SessionStore,
+                  auth_status, get_provider, get_question_type)
 
 STEPS = ["설문 설계", "페르소나 설계", "분포 학습", "가상 응답 생성", "결과"]
 
+# ----------------------------------------------------------------------------
+# 서비스 · 저장소 (UI는 이 진입점만 쓴다)
+# ----------------------------------------------------------------------------
+store = SessionStore()
+q_service = QuestionnaireService()
+learn_service = LearningService()
+gen_service = GenerationService()
+export_service = ExportService()
+
 st.set_page_config(
-    page_title="가상응답자 스튜디오",
+    page_title=APP_TITLE,
     page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -54,49 +51,45 @@ st.markdown(
 
 
 # ----------------------------------------------------------------------------
-# 세션 상태 초기화
+# 상태 초기화 (Store 경유 — 향후 DB 저장소로 교체 가능)
 # ----------------------------------------------------------------------------
 def init_state():
-    defaults = {
-        "step": 1,
-        "questions": [],
-        "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
-        "transcripts": [],
-        "use_precision": False,
-        "learned": None,
-        "learned_file": None,
-        "results_df": None,
-        "gen_meta": None,
-        "provider": "gemini",
-        "model_override": "",
-        "gen_cache": {},
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    store.set_default("step", 1)
+    store.set_default("questions", [])
+    store.set_default("persona_dims",
+                      {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+    store.set_default("transcripts", [])
+    store.set_default("use_precision", False)
+    store.set_default("learned", None)
+    store.set_default("learned_file", None)
+    store.set_default("results_df", None)
+    store.set_default("gen_meta", None)
+    store.set_default("provider", "gemini")
+    store.set_default("model_override", "")
+    store.set_default("gen_cache", {})
 
 
 init_state()
 
 
 def goto(step: int):
-    st.session_state.step = step
+    store.set("step", step)
     st.rerun()
 
 
 def current_model() -> str:
-    override = st.session_state.model_override.strip()
+    override = (store.get("model_override") or "").strip()
     if override:
         return override
-    return PROVIDERS[st.session_state.provider]["default_model"]
+    return get_provider(store.get("provider")).default_model
 
 
 # ----------------------------------------------------------------------------
 # 사이드바
 # ----------------------------------------------------------------------------
 with st.sidebar:
-    st.title("가상응답자 스튜디오")
-    st.caption("Synthetic Respondent Studio")
+    st.title(APP_TITLE)
+    st.caption(APP_SUBTITLE)
     st.divider()
 
     step_labels = [f"{i + 1}. {name}" for i, name in enumerate(STEPS)]
@@ -104,35 +97,35 @@ with st.sidebar:
         "단계",
         options=list(range(1, 6)),
         format_func=lambda i: step_labels[i - 1],
-        index=st.session_state.step - 1,
+        index=store.get("step") - 1,
         label_visibility="collapsed",
         key="sidebar_step",
     )
-    if selected != st.session_state.step:
-        st.session_state.step = selected
+    if selected != store.get("step"):
+        store.set("step", selected)
         st.rerun()
 
     st.divider()
     st.subheader("AI 설정")
-    ok, msg = auth_status(st.session_state.provider)
-    st.write(f"선택: **{PROVIDERS[st.session_state.provider]['label']}**")
+    ok, msg = auth_status(store.get("provider"))
+    st.write(f"선택: **{get_provider(store.get('provider')).label}**")
     st.caption(f"모델: {current_model()}")
     if ok:
         st.success(msg)
     else:
         st.error(msg)
 
-    n_q = len(st.session_state.questions)
-    n_t = len(st.session_state.transcripts)
+    n_q = len(store.get("questions"))
+    n_t = len(store.get("transcripts"))
     st.divider()
-    st.caption(f"문항 {n_q}개 · 페르소나 차원 {len(st.session_state.persona_dims)}개")
-    if st.session_state.learned:
-        st.caption(f"분포 학습됨 ({st.session_state.learned_file})")
+    st.caption(f"문항 {n_q}개 · 페르소나 차원 {len(store.get('persona_dims'))}개")
+    if store.get("learned"):
+        st.caption(f"분포 학습됨 ({store.get('learned_file')})")
     if n_t:
         st.caption(f"인터뷰 트랜스크립트 {n_t}건")
 
 
-step = st.session_state.step
+step = store.get("step")
 
 
 # ----------------------------------------------------------------------------
@@ -142,74 +135,75 @@ def step1():
     st.header("1. 설문 설계")
     st.caption("가상 응답을 생성할 설문 문항을 입력하세요.")
 
-    questions = st.session_state.questions
+    questions = store.get("questions")
 
     if not questions:
         with st.container(border=True):
             st.write("아직 문항이 없습니다. 샘플 설문으로 시작하거나 직접 추가하세요.")
             if st.button("샘플 설문 불러오기", type="primary"):
-                import json
-
-                st.session_state.questions = json.loads(SAMPLE_Q_PATH.read_text(encoding="utf-8"))
+                store.set("questions", q_service.load_sample_questions())
                 st.rerun()
 
     for idx, q in enumerate(questions):
-        with st.expander(question_summary(q), expanded=False):
+        with st.expander(q_service.question_summary(q), expanded=False):
             new_text = st.text_input("문항 내용", value=q["text"], key=f"qtext_{q['id']}")
             if new_text != q["text"]:
                 q["text"] = new_text
-            if q["type"] in ("single", "multi"):
+                store.set("questions", questions)
+            qtype = get_question_type(q["type"])
+            if qtype.needs_options:
                 opts_raw = st.text_area(
                     "보기 (한 줄에 하나씩)",
                     value="\n".join(q.get("options", [])),
                     key=f"qopts_{q['id']}",
                 )
                 q["options"] = [o.strip() for o in opts_raw.split("\n") if o.strip()]
+                store.set("questions", questions)
             c1, c2, c3 = st.columns(3)
             with c1:
                 if st.button("위로", key=f"qup_{q['id']}", disabled=idx == 0):
                     questions[idx - 1], questions[idx] = questions[idx], questions[idx - 1]
+                    store.set("questions", questions)
                     st.rerun()
             with c2:
                 if st.button("아래로", key=f"qdown_{q['id']}", disabled=idx == len(questions) - 1):
                     questions[idx + 1], questions[idx] = questions[idx], questions[idx + 1]
+                    store.set("questions", questions)
                     st.rerun()
             with c3:
                 if st.button("삭제", key=f"qdel_{q['id']}"):
                     questions.pop(idx)
+                    store.set("questions", questions)
                     st.rerun()
 
     st.subheader("문항 추가")
     with st.container(border=True):
         with st.form("add_question"):
             qtext = st.text_input("문항 내용")
-            qtype = st.selectbox(
+            qtype_name = st.selectbox(
                 "문항 유형",
-                options=list(QUESTION_TYPES.keys()),
-                format_func=lambda k: QUESTION_TYPES[k],
+                options=list(QUESTION_TYPE_REGISTRY.keys()),
+                format_func=lambda k: QUESTION_TYPE_REGISTRY[k].label,
             )
             qopts = ""
-            if qtype in ("single", "multi"):
+            if get_question_type(qtype_name).needs_options:
                 qopts = st.text_area("보기 (한 줄에 하나씩 입력)")
             submitted = st.form_submit_button("추가", type="primary")
         if submitted:
-            if not qtext.strip():
-                st.error("문항 내용을 입력하세요.")
-            elif qtype in ("single", "multi"):
-                opts = [o.strip() for o in qopts.split("\n") if o.strip()]
-                if len(opts) < 2:
-                    st.error("보기를 2개 이상 입력하세요.")
-                else:
-                    st.session_state.questions.append(
-                        {"id": new_question_id(questions), "text": qtext.strip(),
-                         "type": qtype, "options": opts}
-                    )
-                    st.rerun()
+            opts = [o.strip() for o in qopts.split("\n") if o.strip()]
+            qdict = {
+                "id": q_service.new_question_id(questions),
+                "text": qtext.strip(),
+                "type": qtype_name,
+                "options": opts,
+            }
+            errs = q_service.validate_question(qdict)
+            if errs:
+                for e in errs:
+                    st.error(e)
             else:
-                st.session_state.questions.append(
-                    {"id": new_question_id(questions), "text": qtext.strip(),
-                     "type": qtype, "options": []}
-                )
+                questions.append(qdict)
+                store.set("questions", questions)
                 st.rerun()
 
     st.divider()
@@ -233,7 +227,7 @@ def step2():
     st.header("2. 페르소나 설계")
     st.caption("가상 응답자의 인구통계 분포를 설정합니다. 항목별 비율의 합은 100%여야 합니다.")
 
-    dims = st.session_state.persona_dims
+    dims = store.get("persona_dims")
     valid = True
 
     for dim in list(dims.keys()):
@@ -244,6 +238,7 @@ def step2():
             with h2:
                 if st.button("차원 삭제", key=f"dimdel_{dim}"):
                     del dims[dim]
+                    store.set("persona_dims", dims)
                     st.rerun()
             cats = dims[dim]
             cols = st.columns(max(1, len(cats)))
@@ -254,12 +249,13 @@ def step2():
                         step=1.0, key=f"pct_{dim}_{cat}",
                     )
                     cats[cat] = v
+            store.set("persona_dims", dims)
             total = sum(cats.values())
             if abs(total - 100.0) > 0.01:
                 st.error(f"합계가 100%가 아닙니다 (현재 {total:.1f}%).")
                 valid = False
             else:
-                st.success(f"합계 100% 확인")
+                st.success("합계 100% 확인")
             c1, c2 = st.columns(2)
             with c1:
                 new_cat = st.text_input("구분 추가", key=f"newcat_{dim}", placeholder="예: 70대")
@@ -267,16 +263,19 @@ def step2():
                 st.write("")
                 if st.button("구분 추가 실행", key=f"addcat_{dim}") and new_cat.strip():
                     cats[new_cat.strip()] = 0.0
+                    store.set("persona_dims", dims)
                     st.rerun()
             for cat in list(cats.keys()):
                 if st.button(f"'{cat}' 삭제", key=f"catdel_{dim}_{cat}"):
                     del cats[cat]
+                    store.set("persona_dims", dims)
                     st.rerun()
 
     with st.expander("새 인구통계 차원 추가"):
         new_dim = st.text_input("차원 이름", placeholder="예: 소득대")
         if st.button("차원 추가") and new_dim.strip():
             dims[new_dim.strip()] = {"구분1": 50.0, "구분2": 50.0}
+            store.set("persona_dims", dims)
             st.rerun()
 
     st.subheader("고정밀 모드 (인터뷰 기반)")
@@ -300,10 +299,10 @@ def step2():
                 except Exception:
                     text = ""
                 loaded.append({"name": f.name, "text": text})
-            st.session_state.transcripts = loaded
+            store.set("transcripts", loaded)
             st.success(f"{len(loaded)}건 로드됨")
-        elif st.session_state.transcripts:
-            st.info(f"{len(st.session_state.transcripts)}건 로드됨")
+        elif store.get("transcripts"):
+            st.info(f"{len(store.get('transcripts'))}건 로드됨")
 
     st.divider()
     c1, c2 = st.columns(2)
@@ -328,13 +327,14 @@ def step3():
     with c1:
         if st.button("샘플 데이터로 체험"):
             df = pd.read_excel(SAMPLE_XLSX_PATH)
-            st.session_state.learned = learn_distributions(df, st.session_state.questions)
-            st.session_state.learned_file = "sample_real_data.xlsx (샘플)"
+            store.set("learned",
+                      learn_service.learn_distributions(df, store.get("questions")))
+            store.set("learned_file", "sample_real_data.xlsx (샘플)")
             st.rerun()
     with c2:
         if st.button("분포 학습 초기화"):
-            st.session_state.learned = None
-            st.session_state.learned_file = None
+            store.set("learned", None)
+            store.set("learned_file", None)
             st.rerun()
 
     if uploaded is not None:
@@ -345,21 +345,21 @@ def step3():
             df = None
         if df is not None:
             with st.spinner("분포 학습 중..."):
-                learned = learn_distributions(df, st.session_state.questions)
-            st.session_state.learned = learned
-            st.session_state.learned_file = uploaded.name
+                learned = learn_service.learn_distributions(df, store.get("questions"))
+            store.set("learned", learned)
+            store.set("learned_file", uploaded.name)
             st.success(f"{len(learned)}개 문항 매칭됨")
 
-    learned = st.session_state.learned
+    learned = store.get("learned")
     if learned:
-        st.subheader(f"학습된 분포 ({st.session_state.learned_file})")
-        for q in st.session_state.questions:
+        st.subheader(f"학습된 분포 ({store.get('learned_file')})")
+        for q in store.get("questions"):
             info = learned.get(q["id"])
             with st.container(border=True):
                 if not info:
-                    st.write(f"{question_summary(q)} — 매칭된 컬럼 없음")
+                    st.write(f"{q_service.question_summary(q)} — 매칭된 컬럼 없음")
                     continue
-                st.write(f"**{question_summary(q)}**  ·  n={info['n']}")
+                st.write(f"**{q_service.question_summary(q)}**  ·  n={info['n']}")
                 if info["dist"]:
                     ddf = pd.DataFrame(
                         {"보기": list(info["dist"].keys()), "비율": list(info["dist"].values())}
@@ -391,24 +391,21 @@ def step4():
         st.subheader("AI 선택")
         provider = st.radio(
             "사용할 AI",
-            options=list(PROVIDERS.keys()),
-            format_func=lambda k: f"{PROVIDERS[k]['label']} ({PROVIDERS[k]['default_model']})",
+            options=list(PROVIDER_REGISTRY.keys()),
+            format_func=lambda k: f"{get_provider(k).label} ({get_provider(k).default_model})",
             horizontal=True,
-            key="provider_radio",
+            key="provider",
         )
-        st.session_state.provider = provider
         ok, msg = auth_status(provider)
         if ok:
             st.success(msg)
         else:
             st.error(msg)
-        model = st.text_input(
+        st.text_input(
             "모델명 (비워두면 기본값)",
-            value=st.session_state.model_override,
-            placeholder=PROVIDERS[provider]["default_model"],
-            key="model_input",
+            placeholder=get_provider(provider).default_model,
+            key="model_override",
         )
-        st.session_state.model_override = model
         if provider == "gemini":
             st.caption(
                 "Gemini 기본값은 Pro 계열입니다 (1,000개 설문 벤치마크에서 표준 LLM 중 최고 67%). "
@@ -417,53 +414,54 @@ def step4():
 
     with st.container(border=True):
         st.subheader("생성 방식")
-        has_learned = bool(st.session_state.learned)
+        has_learned = bool(store.get("learned"))
         st.write(
             "- 학습된 분포가 있는 선택형 문항: 경험분포에서 직접 샘플링 (API 호출 없음)"
             if has_learned
             else "- 선택형 문항: Prolific 2026 방식 — LLM이 페르소나별 보기별 선택 확률분포를 추정하면 샘플링 (분포 오차 35~48% 감소 보고)"
         )
         st.write("- 주관식 문항: LLM 배치 생성")
-        n_trans = len(st.session_state.transcripts)
+        n_trans = len(store.get("transcripts"))
         use_precision = st.checkbox(
             "고정밀 모드 (인터뷰 기반)",
-            value=st.session_state.use_precision and n_trans > 0,
+            value=store.get("use_precision") and n_trans > 0,
             disabled=n_trans == 0,
             help="스탠포드 Generative Agents 연구: 정규화 정확도 83%. 트랜스크립트 업로드 시 활성화.",
         )
-        st.session_state.use_precision = use_precision and n_trans > 0
+        store.set("use_precision", use_precision and n_trans > 0)
         if n_trans == 0:
             st.caption("인터뷰 트랜스크립트를 업로드하면 활성화됩니다 (2단계에서 업로드).")
 
     n = st.number_input("생성할 응답자 수", min_value=1, max_value=200, value=30, step=1)
 
-    can_run = ok and len(st.session_state.questions) > 0
+    can_run = ok and len(store.get("questions")) > 0
     if st.button("생성 시작", type="primary", disabled=not can_run):
         if not ok:
             st.error("AI 인증이 필요합니다.")
         else:
             progress = st.progress(0.0, text="생성 중...")
             try:
-                df = synth.generate_responses(
-                    questions=st.session_state.questions,
-                    persona_dims=st.session_state.persona_dims,
+                df = gen_service.generate_responses(
+                    questions=store.get("questions"),
+                    persona_dims=store.get("persona_dims"),
                     n=int(n),
                     provider_id=provider,
                     model=current_model(),
-                    learned=st.session_state.learned,
+                    learned=store.get("learned"),
                     progress_cb=lambda f: progress.progress(f, text=f"생성 중... {int(f * 100)}%"),
-                    cache=st.session_state.gen_cache,
-                    transcripts=st.session_state.transcripts if st.session_state.use_precision else None,
+                    cache=store.get("gen_cache"),
+                    transcripts=store.get("transcripts") if store.get("use_precision") else None,
+                    use_precision=store.get("use_precision"),
                 )
-                st.session_state.results_df = df
-                st.session_state.gen_meta = {
+                store.set("results_df", df)
+                store.set("gen_meta", {
                     "생성일시": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "AI": PROVIDERS[provider]["label"],
+                    "AI": get_provider(provider).label,
                     "모델": current_model(),
                     "응답자 수": int(n),
                     "분포 학습": "사용" if has_learned else "미사용",
-                    "고정밀 모드": "사용" if st.session_state.use_precision else "미사용",
-                }
+                    "고정밀 모드": "사용" if store.get("use_precision") else "미사용",
+                })
                 progress.progress(1.0, text="완료")
                 st.success(f"{len(df)}건 생성 완료")
             except Exception as e:
@@ -477,7 +475,7 @@ def step4():
         st.button(
             "다음: 결과 확인 →",
             type="primary",
-            disabled=st.session_state.results_df is None,
+            disabled=store.get("results_df") is None,
             on_click=lambda: goto(5),
         )
 
@@ -491,14 +489,14 @@ def step5():
     # 정직한 한계 고지 — 결과 탭 상단 고정 표시
     st.warning(DISCLAIMER)
 
-    df = st.session_state.results_df
+    df = store.get("results_df")
     if df is None:
         st.info("아직 생성된 데이터가 없습니다. 4단계에서 가상 응답을 생성하세요.")
         if st.button("← 생성 단계로 이동", on_click=lambda: goto(4)):
             pass
         return
 
-    meta = st.session_state.gen_meta or {}
+    meta = store.get("gen_meta") or {}
     with st.container(border=True):
         cols = st.columns(len(meta) or 1)
         for i, (k, v) in enumerate(meta.items()):
@@ -508,16 +506,16 @@ def step5():
     st.dataframe(df, use_container_width=True, height=400)
 
     # 생성 분포 vs 학습 분포 비교
-    learned = st.session_state.learned or {}
+    learned = store.get("learned") or {}
     comp_qs = [
-        q for q in st.session_state.questions
+        q for q in store.get("questions")
         if q["type"] in ("single", "likert") and q["id"] in learned and learned[q["id"]].get("dist")
     ]
     if comp_qs:
         st.subheader("분포 비교 (생성 vs 학습)")
         for q in comp_qs:
             with st.container(border=True):
-                st.write(f"**{question_summary(q)}**")
+                st.write(f"**{q_service.question_summary(q)}**")
                 gen_counts = df[q["id"]].astype(str).value_counts(normalize=True)
                 cats = list(learned[q["id"]]["dist"].keys())
                 cdf = pd.DataFrame({
@@ -533,7 +531,7 @@ def step5():
     st.subheader("다운로드")
     c1, c2 = st.columns(2)
     with c1:
-        xlsx = synth.to_excel_bytes(df, meta=meta)
+        xlsx = export_service.to_excel_bytes(df, meta=meta)
         st.download_button(
             "엑셀 다운로드 (.xlsx)",
             data=xlsx,

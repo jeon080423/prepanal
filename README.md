@@ -63,9 +63,20 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 ## 파일 구성
 
 ```
-app.py                  # Streamlit 마법사 UI
-synth.py                # 핵심 로직 (분포 학습·페르소나 샘플링·프롬프트·엑셀 출력)
-providers.py            # AI provider 추상화 (Gemini/OpenAI, CLI 우선·secrets 폴백)
+app.py                  # Streamlit 마법사 UI (렌더링만 — 로직은 core/ 호출)
+config.py               # 중앙 설정 (상수·모델명·기본 분포·고지문)
+core/
+  __init__.py           # 공개 API 진입점
+  models.py             # Question·LearnedDist 등 데이터 모델
+  question_types.py     # 문항 유형 레지스트리 (플러그인 ①)
+  providers.py          # AI provider 레지스트리 (플러그인 ②)
+  strategies.py         # 생성 전략 레지스트리 (플러그인 ③)
+  persona.py            # 페르소나 샘플링
+  services.py           # Questionnaire·Learning·Generation·Export 서비스
+  store.py              # Store 추상화 (SessionStore/MemoryStore)
+tests/
+  test_registries.py    # 플러그인 등록·오류 메시지 테스트
+  test_core.py          # 페르소나·학습·생성·엑셀 테스트 (LLM 모킹)
 requirements.txt        # streamlit, pandas, openpyxl, plotly
 .streamlit/config.toml  # 테마 설정
 .streamlit/secrets.toml.example  # 로컬/클라우드 secrets 템플릿 (실제 키 없음)
@@ -75,6 +86,30 @@ samples/
   sample_real_data.xlsx      # 데모 실제응답 200건
   make_samples.py            # 샘플 재생성 스크립트
 ```
+
+## 아키텍처: 플러그인 포인트 3종
+
+**① 새 AI provider 추가** — `core/providers.py`
+1. `AIProvider`를 상속한 클래스 작성 (`_call_rest`만 구현)
+2. `_PROVIDER_CLASSES`에 `{"kind": 새클래스}` 한 줄 추가
+3. `config.py`의 `PROVIDER_SPECS`에 스펙(라벨·모델·CLI·시크릿명) 한 줄 추가
+4. 호출부의 `if provider == ...` 분기는 없음 — 레지스트리가 디스패치
+5. `tests/test_registries.py`에 등록 테스트 1개 추가 권장
+
+**② 새 문항 유형 추가** — `core/question_types.py`
+1. `QuestionType`을 상속한 클래스 작성
+   (`validate`·`prompt_fragment`·`parse_response`·`learn_distribution` 구현)
+2. 클래스 위에 `@register_question_type` 데코레이터 1줄
+3. 생성 전략·분포 학습·UI가 자동으로 새 유형 인식 (추가 수정 불필요)
+4. 선택형이면 `is_choice = True` — 분포추출/학습 전략이 자동 매칭
+5. `tests/test_registries.py`에 등록 테스트 1개 추가 권장
+
+**③ 새 생성 전략 추가** — `core/strategies.py`
+1. `GenerationStrategy`를 상속한 클래스 작성 (`supports`·`generate` 구현)
+2. 하단에 `register_strategy(새전략())` 한 줄 추가
+3. (선택) `config.py`의 `STRATEGY_ORDER`에 우선순위 반영
+4. `GenerationService`가 문항마다 우선순위대로 자동 매칭
+5. `generate_fn` 주입으로 LLM 없이 테스트 가능 (`GenerationContext`)
 
 ## 사용 흐름
 
