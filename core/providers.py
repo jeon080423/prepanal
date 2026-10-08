@@ -79,7 +79,13 @@ class AIProvider(ABC):
                 f"API 키가 없습니다. Streamlit Cloud의 secrets에 "
                 f"{self.secret_name}를 등록하거나 로컬 CLI 환경을 사용하세요."
             )
-        return self._call_rest(api_key, prompt, model, timeout)
+        try:
+            return self._call_rest(api_key, prompt, model, timeout)
+        except RuntimeError as e:
+            # 429 (할당량 초과) 시 폴백 모델로 1회 재시도
+            if "429" in str(e) and self.fallback_model and model != self.fallback_model:
+                return self._call_rest(api_key, prompt, self.fallback_model, timeout)
+            raise
 
     def _call_cli(self, prompt: str, model: str, timeout: int) -> str:
         proc = subprocess.run(
