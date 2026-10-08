@@ -17,7 +17,7 @@ import streamlit as st
 from config import (APP_SUBTITLE, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
                     METHODOLOGY_NOTE, SAMPLE_XLSX_PATH)
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
-                  LearningService, QuestionnaireService, SessionStore,
+                  LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type)
 
 STEPS = ["설문 설계", "페르소나 설계", "분포 학습", "가상 응답 생성", "결과"]
@@ -243,6 +243,34 @@ def step1():
                 store.set("questions", q_service.load_sample_questions())
                 st.rerun()
 
+    # PDF 설문지 자동 인식
+    with st.expander("📄 PDF 설문지에서 자동 인식", expanded=False):
+        st.caption("PDF 설문지를 업로드하면 AI가 문항·보기·분기 로직을 자동 파싱합니다.")
+        pdf_file = st.file_uploader("PDF 파일 선택", type=["pdf"], key="pdf_upload")
+        if pdf_file is not None:
+            if st.button("문항 자동 인식 시작", type="primary", key="pdf_parse"):
+                with st.spinner("PDF를 분석하고 있습니다..."):
+                    try:
+                        pdf_text = PdfQuestionnaireService.extract_text(pdf_file.read())
+                        if not pdf_text.strip():
+                            st.error("PDF에서 텍스트를 추출하지 못했습니다. 스캔 이미지 PDF는 지원하지 않습니다.")
+                        else:
+                            parsed = PdfQuestionnaireService.parse_questions(
+                                pdf_text, store.get("provider"))
+                            if not parsed:
+                                st.error("문항 파싱에 실패했습니다. PDF 내용을 확인해주세요.")
+                            else:
+                                # 기존 문항에 추가 (ID 부여)
+                                for pq in parsed:
+                                    pq["id"] = q_service.new_question_id(questions)
+                                    questions.append(pq)
+                                store.set("questions", questions)
+                                n_branch = sum(1 for q in parsed if q.get("branching"))
+                                st.success(f"{len(parsed)}개 문항을 인식했습니다. (분기 로직 {n_branch}건 포함)")
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"처리 중 오류: {e}")
+
     for idx, q in enumerate(questions):
         with st.expander(q_service.question_summary(q), expanded=False):
             new_text = st.text_input("문항 내용", value=q["text"], key=f"qtext_{q['id']}")
@@ -257,6 +285,15 @@ def step1():
                     key=f"qopts_{q['id']}",
                 )
                 q["options"] = [o.strip() for o in opts_raw.split("\n") if o.strip()]
+                store.set("questions", questions)
+            # 분기 로직 표시/편집
+            branching = st.text_input(
+                "분기 로직 (예: 문3에서 ① 응답 시 문5로 이동)",
+                value=q.get("branching", ""),
+                key=f"qbranch_{q['id']}",
+            )
+            if branching != q.get("branching", ""):
+                q["branching"] = branching
                 store.set("questions", questions)
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -287,6 +324,7 @@ def step1():
             qopts = ""
             if get_question_type(qtype_name).needs_options:
                 qopts = st.text_area("보기 (한 줄에 하나씩 입력)")
+            qbranch = st.text_input("분기 로직 (선택사항)")
             submitted = st.form_submit_button("추가", type="primary")
         if submitted:
             opts = [o.strip() for o in qopts.split("\n") if o.strip()]
@@ -295,6 +333,7 @@ def step1():
                 "text": qtext.strip(),
                 "type": qtype_name,
                 "options": opts,
+                "branching": qbranch.strip(),
             }
             errs = q_service.validate_question(qdict)
             if errs:

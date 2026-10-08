@@ -13,7 +13,7 @@ from .question_types import (QUESTION_TYPE_REGISTRY, QuestionType,
                              UnknownQuestionTypeError, get_question_type,
                              register_question_type)
 from .services import (ExportService, GenerationService, LearningService,
-                       QuestionnaireService)
+                       PdfQuestionnaireService, QuestionnaireService)
 from .store import MemoryStore, SessionStore, Store
 from .strategies import (STRATEGY_REGISTRY, GenerationContext,
                          GenerationStrategy, UnknownStrategyError,
@@ -36,6 +36,6 @@ __all__ = [
     "sample_persona", "persona_to_text", "build_persona_texts",
     "weighted_choice",
     "QuestionnaireService", "LearningService", "GenerationService",
-    "ExportService",
+    "ExportService", "PdfQuestionnaireService",
     "Store", "MemoryStore", "SessionStore",
 ]

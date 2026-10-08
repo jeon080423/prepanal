@@ -35,6 +35,8 @@ class QuestionnaireService:
         base = f"{q['id']}. {q['text']} ({qtype.label})"
         if qtype.needs_options and q.get("options"):
             base += " — " + ", ".join(qtype.options_for(q))
+        if q.get("branching"):
+            base += " ⤷분기"
         return base
 
     @staticmethod
@@ -198,3 +200,87 @@ class ExportService:
                 writer, index=False, header=False, sheet_name="방법론_안내"
             )
         return buf.getvalue()
+
+
+# ----------------------------------------------------------------------------
+# PDF 설문지 자동 인식
+# ----------------------------------------------------------------------------
+class PdfQuestionnaireService:
+    """PDF 설문지를 업로드하면 AI가 문항을 자동 파싱합니다.
+
+    분기문항(스킵 로직)도 인식하여 branching 필드에 저장합니다.
+    """
+
+    @staticmethod
+    def extract_text(pdf_bytes: bytes) -> str:
+        """PDF에서 텍스트를 추출합니다."""
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        parts = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                parts.append(text.strip())
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def parse_questions(pdf_text: str, provider_id: str = "gemini") -> list[dict]:
+        """AI를 이용해 PDF 텍스트에서 설문 문항을 파싱합니다.
+
+        Returns:
+            [{"text": ..., "type": "single|multi|likert|open",
+              "options": [...], "branching": "..."}, ...]
+            branching은 분기 로직 설명 문자열 (없으면 "")
+        """
+        from .providers import generate
+
+        prompt = f"""다음은 설문지 PDF에서 추출한 텍스트입니다. 설문 문항을 JSON 배열로 파싱하세요.
+
+규칙:
+1. 각 문항은 {{"text": "문항 내용", "type": "single|multi|likert|open", "options": ["보기1", "보기2", ...], "branching": "분기 설명 또는 빈 문자열"}} 형태입니다.
+2. type 판단 기준:
+   - single: 보기 중 하나만 선택 (단일선택)
+   - multi: 복수 선택 가능 (다중선택, "모두 선택" 등)
+   - likert: 5점 척도 (매우 그렇다~전혀 그렇지 않다 등)
+   - open: 주관식 서술형
+3. 분기문항(스킵 로직)이 있으면 branching에 설명을 적으세요. 예: "문3에서 ① 응답 시 문5로 이동", "문2의 ② 응답자만 응답"
+   분기가 없으면 빈 문자열("")을 넣으세요.
+4. 보기 번호(①②③, 1. 2. 3. 등)는 제거하고 보기 내용만 추출하세요.
+5. 설문 안내문, 표지, 인구통계 안내 등은 문항에서 제외하세요.
+6. JSON 배열만 출력하고 다른 설명은 붙이지 마세요.
+
+--- 설문지 텍스트 ---
+{pdf_text[:12000]}
+--- 끝 ---"""
+
+        result = generate(provider_id, prompt)
+        # JSON 추출 (코드블록 제거)
+        result = result.strip()
+        if result.startswith("```"):
+            lines = result.split("\n")
+            result = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        try:
+            questions = json.loads(result)
+        except json.JSONDecodeError:
+            # JSON 파싱 실패 시 빈 리스트
+            return []
+        # 유효성 검증 및 정규화
+        valid_types = {"single", "multi", "likert", "open"}
+        cleaned = []
+        for q in questions:
+            if not isinstance(q, dict) or not q.get("text", "").strip():
+                continue
+            qtype = q.get("type", "single")
+            if qtype not in valid_types:
+                qtype = "single"
+            options = q.get("options", [])
+            if not isinstance(options, list):
+                options = []
+            options = [str(o).strip() for o in options if str(o).strip()]
+            cleaned.append({
+                "text": q["text"].strip(),
+                "type": qtype,
+                "options": options,
+                "branching": str(q.get("branching", "")).strip(),
+            })
+        return cleaned
