@@ -67,6 +67,7 @@ def init_state():
     store.set_default("provider", "gemini")
     store.set_default("model_override", "")
     store.set_default("gen_cache", {})
+    store.set_default("show_theory", False)
 
 
 init_state()
@@ -125,6 +126,102 @@ with st.sidebar:
         st.caption(f"분포 학습됨 ({store.get('learned_file')})")
     if n_t:
         st.caption(f"인터뷰 트랜스크립트 {n_t}건")
+
+    st.divider()
+    if st.button("📖 이론적 배경", use_container_width=True):
+        store.set("show_theory", True)
+        st.rerun()
+
+
+step = store.get("step")
+
+
+# ----------------------------------------------------------------------------
+# 이론적 배경
+# ----------------------------------------------------------------------------
+def theory_page():
+    if st.button("← 돌아가기"):
+        store.set("show_theory", False)
+        st.rerun()
+
+    st.header("📖 이론적 배경")
+    st.caption("합성응답자(Synthetic Respondents) 방법론의 이론적 기초")
+
+    st.subheader("1. 합성응답자란?")
+    st.write(
+        "합성응답자(Synthetic Respondents)는 대규모 언어모델(LLM)을 이용해 "
+        "특정 인구통계학적·심리적 프로필을 가진 가상 인물을 시뮬레이션하고, "
+        "이들이 설문 문항에 어떻게 응답할지를 생성하는 방법론입니다. "
+        "실제 사람을 대상으로 조사하기 전에 설문지의 품질을 검증하거나, "
+        "연구 방향성을 탐색하는 **파일럿 테스트** 용도로 활용됩니다."
+    )
+
+    st.subheader("2. 이론적 기반")
+    st.markdown(
+        """
+**① LLM as Human Simulators**
+
+LLM은 방대한 인간 생성 텍스트로 학습되면서 인간의 응답 패턴, 편향, 맥락적 뉘앙스를
+내재화합니다. 적절한 페르소나 프롬프팅을 통해 특정 집단의 응답 성향을 모사할 수 있다는 것이
+최근 연구들의 공통된 발견입니다.
+
+**② 분포 기반 샘플링 (Prolific 2026)**
+
+본 도구는 Prolific 2026 연구 방식을 따릅니다. 페르소나에게 강제 단일 응답을 요구하는 대신,
+보기별 선택 **확률분포**를 LLM으로부터 추출한 뒤 샘플링합니다.
+이 방식은 단일 응답 방식 대비 분포 오차를 35~48% 감소시키는 것으로 보고되었습니다.
+
+**③ 고정밀 모드 (Stanford Generative Agents)**
+
+인터뷰 트랜스크립트를 활용하는 고정밀 모드는 스탠포드 Generative Agents 연구에 기반합니다.
+2시간 분량의 심층 인터뷰를 바탕으로 생성된 에이전트는
+정규화 정확도 83%로 가장 높은 fidelity를 보였습니다.
+"""
+    )
+
+    st.subheader("3. 본 도구의 방법론")
+    st.markdown(
+        """
+본 도구는 **GPU 파인튜닝(모델 가중치 학습)을 하지 않습니다.** 대신 3단계 파이프라인으로 동작합니다.
+
+**Step A. 분포 학습**
+업로드된 실제 응답 데이터(Excel)에서 문항별 경험분포를 추출합니다.
+이는 모집단의 응답 경향성에 대한 empirical prior 역할을 합니다.
+
+**Step B. 페르소나 설계**
+연령, 성별, 직업 등 인구통계 차원별 분포를 설정합니다.
+각 가상 응답자는 이 분포에서 샘플링된 프로필을 부여받습니다.
+
+**Step C. 확률분포 샘플링**
+각 페르소나에 대해 LLM으로부터 보기별 선택 확률을 추출한 뒤,
+이 분포에서 실제 응답을 샘플링합니다.
+주관식 문항은 페르소나 프로필을 조건으로 직접 생성합니다.
+"""
+    )
+
+    st.subheader("4. 한계점")
+    st.warning(
+        "합성응답자는 탐색적·방향성 리서치용이며 인간 실측을 대체할 수 없습니다. "
+        "(Pew Research: 평균 12%p 오차)"
+    )
+    st.markdown(
+        """
+- **생태학적 타당도 한계**: LLM의 학습 데이터에 없는 새로운 현상이나 급변하는 여론은 정확히 모사하기 어렵습니다.
+- **편향 증폭 위험**: 학습 데이터의 편향이 합성 응답에 그대로 반영될 수 있습니다.
+- **과적합 주의**: 소수 실제 데이터에 과도하게 맞추면 일반화 성능이 떨어집니다.
+- **용도 제한**: 본조사 대체가 아닌, 본조사 **전** 파일럿 검증용으로만 사용해야 합니다.
+"""
+    )
+
+    st.subheader("5. 참고 문헌")
+    st.markdown(
+        """
+- Prolific (2026). 분포 기반 합성응답 생성 방법론.
+- Park et al. Stanford Generative Agents 연구 (정규화 정확도 83%).
+- Pew Research Center. 합성응답자와 인간 실측 비교 (평균 12%p 오차).
+- Gemini Pro: 1,000개 설문 공개 벤치마크에서 표준 LLM 중 최고 성능 (67%).
+"""
+    )
 
 
 step = store.get("step")
@@ -558,6 +655,9 @@ def step5():
 # ----------------------------------------------------------------------------
 # 라우팅
 # ----------------------------------------------------------------------------
-{"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
-    f"step{step}"
-]()
+if store.get("show_theory"):
+    theory_page()
+else:
+    {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
+        f"step{step}"
+    ]()
