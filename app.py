@@ -74,6 +74,8 @@ init_state()
 
 def goto(step: int):
     store.set("step", step)
+    # 사이드바 radio 위젯 상태도 함께 동기화 (위젯 state가 우선되어 되돌아가는 버그 방지)
+    st.session_state["sidebar_step"] = step
     st.rerun()
 
 
