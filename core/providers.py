@@ -82,8 +82,9 @@ class AIProvider(ABC):
         try:
             return self._call_rest(api_key, prompt, model, timeout)
         except RuntimeError as e:
-            # 429 (할당량 초과) 시 폴백 모델로 1회 재시도
-            if "429" in str(e) and self.fallback_model and model != self.fallback_model:
+            # 429 (할당량 초과) 또는 503 (모델 과부하) 시 폴백 모델로 1회 재시도
+            err = str(e)
+            if ("429" in err or "503" in err) and self.fallback_model and model != self.fallback_model:
                 return self._call_rest(api_key, prompt, self.fallback_model, timeout)
             raise
 
