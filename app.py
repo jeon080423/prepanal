@@ -16,7 +16,7 @@ import streamlit as st
 
 from config import (APP_SUBTITLE, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
                     METHODOLOGY_NOTE, SAMPLE_XLSX_PATH)
-from core import (QUESTION_TYPE_REGISTRY, ExportService, GenerationService,
+from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type)
 
