@@ -349,13 +349,14 @@ def step1():
                             if not parsed:
                                 st.error("문항 파싱에 실패했습니다. PDF 내용을 확인해주세요.")
                             else:
-                                # 기존 문항에 추가 (ID 부여)
+                                # PDF 인식 결과로 기존 문항을 대체 (기본 문항 제거)
+                                new_questions = []
                                 for pq in parsed:
-                                    pq["id"] = q_service.new_question_id(questions)
-                                    questions.append(pq)
-                                store.set("questions", questions)
+                                    pq["id"] = q_service.new_question_id(new_questions)
+                                    new_questions.append(pq)
+                                store.set("questions", new_questions)
                                 n_branch = sum(1 for q in parsed if q.get("branching"))
-                                st.success(f"{len(parsed)}개 문항을 인식했습니다. (분기 로직 {n_branch}건 포함)")
+                                st.success(f"{len(parsed)}개 문항을 인식했습니다. 기존 문항은 제거되었습니다. (분기 로직 {n_branch}건 포함)")
                                 st.rerun()
                     except Exception as e:
                         st.error(f"처리 중 오류: {e}")
