@@ -81,11 +81,15 @@ def parse_json_array(text: str) -> list:
     return json.loads(t[start: end + 1])
 
 
-def _check_batch(parsed: list, expected: int) -> None:
-    if len(parsed) != expected:
+def _check_batch(parsed: list, expected: int) -> list:
+    """배치 크기 검증. LLM이 더 많이 반환하면 앞에서 잘라내고, 적으면 에러."""
+    if len(parsed) > expected:
+        return parsed[:expected]
+    if len(parsed) < expected:
         raise ValueError(
             f"LLM이 {expected}건 요청에 {len(parsed)}건을 반환했습니다. 다시 시도해 주세요."
         )
+    return parsed
 
 
 def _build_dist_prompt(choice_questions: list[dict],
@@ -205,7 +209,7 @@ class DistributionElicitationStrategy(GenerationStrategy):
         ptexts = self.persona_texts(ctx, personas, rng)
         raw = cached_generate(ctx, _build_dist_prompt(questions, ptexts))
         parsed = parse_json_array(raw)
-        _check_batch(parsed, len(personas))
+        parsed = _check_batch(parsed, len(personas))
         out = []
         for i in range(len(personas)):
             ans = {}
@@ -253,7 +257,7 @@ class OpenEndedGenerationStrategy(GenerationStrategy):
         ptexts = self.persona_texts(ctx, personas, rng)
         raw = cached_generate(ctx, _build_open_prompt(questions, ptexts))
         parsed = parse_json_array(raw)
-        _check_batch(parsed, len(personas))
+        parsed = _check_batch(parsed, len(personas))
         out = []
         for i in range(len(personas)):
             ans = {}
