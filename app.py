@@ -313,14 +313,17 @@ def step1():
                     st.rerun()
 
     st.subheader("문항 추가")
+    # 문항 유형 선택을 폼 바깥에 두어 변경 시 즉시 리런되도록 함
+    # (폼 안에서는 selectbox 변경이 리런을 유발하지 않아 보기 입력란이 갱신되지 않는 버그)
+    qtype_name = st.selectbox(
+        "문항 유형",
+        options=list(QUESTION_TYPE_REGISTRY.keys()),
+        format_func=lambda k: QUESTION_TYPE_REGISTRY[k].label,
+        key="add_qtype",
+    )
     with st.container(border=True):
         with st.form("add_question"):
             qtext = st.text_input("문항 내용")
-            qtype_name = st.selectbox(
-                "문항 유형",
-                options=list(QUESTION_TYPE_REGISTRY.keys()),
-                format_func=lambda k: QUESTION_TYPE_REGISTRY[k].label,
-            )
             qopts = ""
             if get_question_type(qtype_name).needs_options:
                 qopts = st.text_area("보기 (한 줄에 하나씩 입력)")

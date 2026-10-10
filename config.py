@@ -41,8 +41,8 @@ PROVIDER_SPECS = {
         "label": "Gemini",
         # Prolific/벤치마크 리서치 기준 기본값: Pro 계열 (표준 LLM 중 최고 67%)
         # 무료 등급에서 할당량 오류(429)가 나면 gemini-3.6-flash로 변경
-        "default_model": "gemini-pro-latest",
-        "fallback_model": "gemini-3.6-flash",
+        "default_model": "gemini-2.5-flash-lite",
+        "fallback_model": "gemini-2.0-flash",
         "cli": "~/workspace/skills/gemini/bin/gemini",
         "secret_name": "GEMINI_API_KEY",
     },
