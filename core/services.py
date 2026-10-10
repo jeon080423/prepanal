@@ -366,6 +366,185 @@ class PdfQuestionnaireService:
         return "\n\n".join(parts)
 
     @staticmethod
+    def extract_hwpx_text(hwpx_bytes: bytes) -> str:
+        """HWPX(한글 문서)에서 텍스트를 추출합니다. (표준 라이브러리만 사용)"""
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        texts = []
+        with zipfile.ZipFile(io.BytesIO(hwpx_bytes)) as z:
+            section_files = sorted(
+                n for n in z.namelist()
+                if n.startswith("Contents/section") and n.endswith(".xml")
+            )
+            if not section_files:
+                raise ValueError("HWPX 섹션 파일을 찾을 수 없습니다.")
+            for name in section_files:
+                root = ET.fromstring(z.read(name))
+                for elem in root.iter():
+                    # hp:p = 문단, hp:t = 텍스트 런 (네임스페이스 무관)
+                    if elem.tag.endswith("}p"):
+                        para = "".join(
+                            t.text for t in elem.iter()
+                            if t.tag.endswith("}t") and t.text
+                        )
+                        if para.strip():
+                            texts.append(para.strip())
+        result = "\n".join(texts)
+        if not result.strip():
+            raise ValueError("HWPX에서 텍스트를 추출하지 못했습니다.")
+        return result
+
+    @staticmethod
+    def extract_doc_text(doc_bytes: bytes) -> str:
+        """구형 Word(.doc) 바이너리에서 텍스트를 추출합니다."""
+        import re
+        import struct
+        import olefile
+
+        def _scan_text_runs(data: bytes) -> list[str]:
+            """UTF-16LE 한글/영문 텍스트 런 스캔 (fallback용)."""
+            text = data.decode("utf-16-le", errors="ignore")
+            # 원문자(①②③), 한글, 영문, 숫자, 기본 구두점 포함
+            pattern = re.compile(
+                r"[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9\u2460-\u24ff\u3200-\u32ff"
+                r"\s.,!?;:()\[\]\"'·…—–\-]{2,}"
+            )
+            runs = []
+            for m in pattern.finditer(text):
+                s = m.group(0).strip()
+                if len(s) >= 2 and re.search(r"[가-힣A-Za-z0-9①-⑳]", s):
+                    runs.append(s)
+            return runs
+
+        def _fc_to_byte_offset(fc_val: int) -> tuple[int, bool]:
+            is_unicode = bool(fc_val & 0x40000000)
+            fc = fc_val & 0x3FFFFFFF
+            return (fc * 2 if is_unicode else fc), is_unicode
+
+        def _parse_structured(data: bytes) -> str:
+            """FIB/피스테이블 기반 구조적 파싱. 실패 시 예외."""
+            u16 = lambda o: struct.unpack("<H", data[o:o + 2])[0]
+            u32 = lambda o: struct.unpack("<I", data[o:o + 4])[0]
+
+            is_complex = bool(u16(0x0A) & 0x0004)
+            ccp_text = u32(0x4C)
+            if ccp_text <= 0 or ccp_text > 10_000_000:
+                raise ValueError("ccpText 비정상")
+
+            out_parts: list[str] = []
+            if is_complex:
+                # fcClx/lcbClx: FibRgFcLcb97 시작(0x94) + 35번째 쌍
+                fc_clx, lcb_clx = u32(0x1AC), u32(0x1B0)
+                if lcb_clx <= 0 or fc_clx + lcb_clx > len(data):
+                    raise ValueError("CLX 범위 비정상")
+                clx = data[fc_clx:fc_clx + lcb_clx]
+                # CLX에서 Pcdt(0x02) 찾기
+                pos, pcdt = 0, None
+                while pos < len(clx):
+                    clxt = clx[pos]
+                    if clxt == 0x02:
+                        lcb = struct.unpack("<I", clx[pos + 1:pos + 5])[0]
+                        pcdt = clx[pos + 5:pos + 5 + lcb]
+                        break
+                    elif clxt == 0x01:
+                        lcb = struct.unpack("<I", clx[pos + 1:pos + 5])[0]
+                        pos += 5 + lcb
+                    else:
+                        raise ValueError("CLX 파싱 실패")
+                if not pcdt or len(pcdt) < 8:
+                    raise ValueError("Pcdt 없음")
+                # 각 Pcd(8바이트)의 bytes 2-5 = FcCompressed
+                fcs = []
+                for i in range(len(pcdt) // 8):
+                    fc_val = struct.unpack(
+                        "<I", pcdt[i * 8 + 2:i * 8 + 6])[0]
+                    fcs.append(_fc_to_byte_offset(fc_val))
+                # piece 구간별로 텍스트 추출
+                for i, (byte_off, is_unicode) in enumerate(fcs):
+                    end_off = (fcs[i + 1][0] if i + 1 < len(fcs)
+                               else len(data))
+                    if byte_off >= len(data) or end_off <= byte_off:
+                        continue
+                    raw = data[byte_off:min(end_off, len(data))]
+                    if is_unicode:
+                        # 2바이트 경계 맞추기
+                        if len(raw) % 2:
+                            raw = raw[:-1]
+                        out_parts.append(
+                            raw.decode("utf-16-le", errors="ignore"))
+                    else:
+                        for enc in ("cp949", "cp1252"):
+                            try:
+                                out_parts.append(raw.decode(enc))
+                                break
+                            except Exception:
+                                continue
+            else:
+                # 단순 문서: fallback 스캔에 맡김
+                raise ValueError("단순 문서 — 스캔 방식 사용")
+
+            text = "".join(out_parts)
+            # 제어문자 정리
+            text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+            if len(text.strip()) < 10:
+                raise ValueError("구조적 파싱 결과 부족")
+            return text
+
+        ole = olefile.OleFileIO(io.BytesIO(doc_bytes))
+        try:
+            if not ole.exists("WordDocument"):
+                raise ValueError("WordDocument 스트림이 없습니다.")
+            data = ole.openstream("WordDocument").read()
+        finally:
+            ole.close()
+
+        if len(data) < 512 or data[:2] != b"\xEC\xA5":
+            raise ValueError("올바른 Word 97-2003 문서(.doc)가 아닙니다.")
+
+        # 1차: 구조적 파싱 시도
+        try:
+            return _parse_structured(data)
+        except Exception:
+            pass
+
+        # 2차: 텍스트 런 스캔 fallback
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for r in _scan_text_runs(data):
+            if r not in seen:
+                seen.add(r)
+                uniq.append(r)
+        result = "\n".join(uniq).replace("\r\n", "\n").replace("\r", "\n")
+        # 의미 없는 짧은 노이즈 줄 제거
+        lines = []
+        for ln in result.split("\n"):
+            s = ln.strip()
+            if len(s) < 2:
+                continue
+            # 한글이 있으면 유지, 없으면 4자 이상만 유지
+            if re.search(r"[가-힣]", s) or len(s) >= 4:
+                lines.append(ln)
+        result = "\n".join(lines)
+        if not result.strip():
+            raise ValueError("DOC에서 텍스트를 추출하지 못했습니다.")
+        return result
+
+    @staticmethod
+    def extract_text_auto(file_bytes: bytes, filename: str) -> str:
+        """파일 확장자에 따라 텍스트를 자동 추출합니다. (pdf/hwpx/doc)"""
+        from pathlib import Path
+        ext = Path(filename).suffix.lower()
+        if ext == ".pdf":
+            return PdfQuestionnaireService.extract_text(file_bytes)
+        if ext == ".hwpx":
+            return PdfQuestionnaireService.extract_hwpx_text(file_bytes)
+        if ext == ".doc":
+            return PdfQuestionnaireService.extract_doc_text(file_bytes)
+        raise ValueError(f"지원하지 않는 파일 형식입니다: {ext} "
+                         "(pdf, hwpx, doc만 지원)")
+
+    @staticmethod
     def parse_questions(pdf_text: str, provider_id: str = "gemini") -> list[dict]:
         """AI를 이용해 PDF 텍스트에서 설문 문항을 파싱합니다.
 

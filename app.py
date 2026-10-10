@@ -332,22 +332,24 @@ def step1():
                 store.set("questions", q_service.load_sample_questions())
                 st.rerun()
 
-    # PDF 설문지 자동 인식
-    with st.expander("📄 PDF 설문지에서 자동 인식", expanded=False):
-        st.caption("PDF 설문지를 업로드하면 AI가 문항·보기·분기 로직을 자동 파싱합니다.")
-        pdf_file = st.file_uploader("PDF 파일 선택", type=["pdf"], key="pdf_upload")
-        if pdf_file is not None:
+    # 설문지 파일 자동 인식 (PDF/HWPX/DOC)
+    with st.expander("📄 설문지 파일에서 자동 인식 (PDF/HWPX/DOC)", expanded=False):
+        st.caption("설문지 파일을 업로드하면 AI가 문항·보기·분기 로직을 자동 파싱합니다.")
+        doc_file = st.file_uploader(
+            "파일 선택 (PDF, HWPX, DOC)", type=["pdf", "hwpx", "doc"], key="pdf_upload")
+        if doc_file is not None:
             if st.button("문항 자동 인식 시작", type="primary", key="pdf_parse"):
-                with st.spinner("PDF를 분석하고 있습니다..."):
+                with st.spinner("파일을 분석하고 있습니다..."):
                     try:
-                        pdf_text = PdfQuestionnaireService.extract_text(pdf_file.read())
-                        if not pdf_text.strip():
-                            st.error("PDF에서 텍스트를 추출하지 못했습니다. 스캔 이미지 PDF는 지원하지 않습니다.")
+                        doc_text = PdfQuestionnaireService.extract_text_auto(
+                            doc_file.read(), doc_file.name)
+                        if not doc_text.strip():
+                            st.error("파일에서 텍스트를 추출하지 못했습니다. 스캔 이미지 PDF는 지원하지 않습니다.")
                         else:
                             parsed = PdfQuestionnaireService.parse_questions(
-                                pdf_text, store.get("provider"))
+                                doc_text, store.get("provider"))
                             if not parsed:
-                                st.error("문항 파싱에 실패했습니다. PDF 내용을 확인해주세요.")
+                                st.error("문항 파싱에 실패했습니다. 파일 내용을 확인해주세요.")
                             else:
                                 # PDF 인식 결과로 기존 문항을 대체 (기본 문항 제거)
                                 new_questions = []
