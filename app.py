@@ -688,7 +688,7 @@ def step5():
                 st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("다운로드")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         xlsx = export_service.to_excel_bytes(
             df, meta=meta, diagnostics=store.get("diagnostics") or []
@@ -708,6 +708,21 @@ def step5():
             file_name="synthetic_responses.csv",
             mime="text/csv",
         )
+    with c3:
+        word_bytes = export_service.to_word_bytes(
+            df,
+            meta=meta,
+            diagnostics=store.get("diagnostics") or [],
+            questions=store.get("questions") or [],
+        )
+        st.download_button(
+            "리포트 다운로드 (.docx)",
+            data=word_bytes,
+            file_name="pilot_diagnostic_report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            type="secondary",
+        )
+        st.caption("진단 리포트 + 문항별 요약이 깔끔하게 정리됩니다.")
 
     st.divider()
     if st.button("← 이전: 가상 응답 생성", on_click=lambda: goto(4)):

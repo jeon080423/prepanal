@@ -207,6 +207,142 @@ class ExportService:
             )
         return buf.getvalue()
 
+    @staticmethod
+    def to_word_bytes(df: pd.DataFrame,
+                      meta: dict | None = None,
+                      diagnostics: list[dict] | None = None,
+                      questions: list[dict] | None = None) -> bytes:
+        """파일럿 진단 리포트를 Word(.docx)로 생성.
+
+        깔끔한 디자인: 제목, 메타 정보, 진단 결과 표, 방법론 안내 섹션.
+        """
+        from docx import Document
+        from docx.shared import Pt, Cm, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_TABLE_ALIGNMENT
+        from docx.oxml.ns import qn
+        from datetime import datetime
+
+        doc = Document()
+
+        # 기본 폰트 설정
+        style = doc.styles["Normal"]
+        style.font.name = "맑은 고딕"
+        style.font.size = Pt(10)
+        style.element.rPr.rFonts.set(qn("w:eastAsia"), "맑은 고딕")
+
+        # 제목
+        title = doc.add_heading("파일럿 테스트 진단 리포트", level=0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # 생성 일시
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(f"생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        doc.add_paragraph()  # 여백
+
+        # 메타 정보
+        if meta:
+            doc.add_heading("기본 정보", level=1)
+            table = doc.add_table(rows=1, cols=2)
+            table.style = "Light Grid Accent 1"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            hdr = table.rows[0].cells
+            hdr[0].text = "항목"
+            hdr[1].text = "내용"
+            for k, v in meta.items():
+                row = table.add_row().cells
+                row[0].text = str(k)
+                row[1].text = str(v)
+            doc.add_paragraph()
+
+        # 진단 결과
+        doc.add_heading("진단 결과", level=1)
+        findings = diagnostics or []
+        if not findings:
+            p = doc.add_paragraph()
+            run = p.add_run("✅ 진단 결과: 문제가 발견되지 않았습니다. 설문지가 정상적으로 작동합니다.")
+            run.font.color.rgb = RGBColor(0x1B, 0x7A, 0x34)
+        else:
+            # 요약
+            high = sum(1 for f in findings if f.get("심각도") == "높음")
+            mid = len(findings) - high
+            p = doc.add_paragraph()
+            p.add_run(f"총 {len(findings)}건 발견 (높음 {high}건, 중간 {mid}건)")
+
+            table = doc.add_table(rows=1, cols=5)
+            table.style = "Light Grid Accent 1"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            headers = ["문항", "문제", "근거", "해결책", "심각도"]
+            for i, h in enumerate(headers):
+                cell = table.rows[0].cells[i]
+                cell.text = h
+                for par in cell.paragraphs:
+                    for r in par.runs:
+                        r.bold = True
+
+            for f in findings:
+                row = table.add_row().cells
+                row[0].text = str(f.get("문항", ""))
+                row[1].text = str(f.get("문제", ""))
+                row[2].text = str(f.get("근거", ""))
+                row[3].text = str(f.get("해결책", ""))
+                sev = str(f.get("심각도", ""))
+                row[4].text = sev
+                # 심각도에 따라 색상
+                for par in row[4].paragraphs:
+                    for r in par.runs:
+                        r.bold = True
+                        if sev == "높음":
+                            r.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+                        else:
+                            r.font.color.rgb = RGBColor(0xCC, 0x7A, 0x00)
+
+            # 열 너비 조정
+            for row in table.rows:
+                row.cells[0].width = Cm(3)
+                row.cells[1].width = Cm(4)
+                row.cells[2].width = Cm(4)
+                row.cells[3].width = Cm(4)
+                row.cells[4].width = Cm(2)
+
+        doc.add_paragraph()
+
+        # 응답 요약 통계
+        if df is not None and not df.empty and questions:
+            doc.add_heading("문항별 응답 요약", level=1)
+            for q in questions:
+                qid = q.get("id")
+                if qid not in df.columns:
+                    continue
+                doc.add_heading(q.get("text", qid), level=2)
+                vc = df[qid].astype(str).value_counts()
+                table = doc.add_table(rows=1, cols=3)
+                table.style = "Light Grid Accent 1"
+                hdr = table.rows[0].cells
+                hdr[0].text = "응답"
+                hdr[1].text = "건수"
+                hdr[2].text = "비율"
+                for val, cnt in vc.items():
+                    row = table.add_row().cells
+                    row[0].text = str(val)
+                    row[1].text = str(cnt)
+                    row[2].text = f"{cnt/len(df)*100:.1f}%"
+                doc.add_paragraph()
+
+        # 방법론 안내
+        doc.add_heading("방법론 안내", level=1)
+        for line in METHODOLOGY_NOTE.strip().split("\n"):
+            if line.strip():
+                doc.add_paragraph(line.strip(), style="List Bullet")
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+
 
 # ----------------------------------------------------------------------------
 # PDF 설문지 자동 인식

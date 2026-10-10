@@ -3,3 +3,4 @@ pandas
 openpyxl
 plotly
 pypdf
+python-docx
