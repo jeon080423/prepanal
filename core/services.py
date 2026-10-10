@@ -185,7 +185,9 @@ class GenerationService:
 class ExportService:
     @staticmethod
     def to_excel_bytes(df: pd.DataFrame, sheet_name: str = "가상응답",
-                       meta: dict | None = None) -> bytes:
+                       meta: dict | None = None,
+                       diagnostics: list[dict] | None = None) -> bytes:
+        from core.diagnostics import findings_to_dataframe
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -198,6 +200,10 @@ class ExportService:
                     info_rows.append([k, str(v)])
             pd.DataFrame(info_rows).to_excel(
                 writer, index=False, header=False, sheet_name="방법론_안내"
+            )
+            # 파일럿 진단 리포트 시트 (규칙 기반, 환각 없음)
+            findings_to_dataframe(diagnostics or []).to_excel(
+                writer, index=False, sheet_name="진단_리포트"
             )
         return buf.getvalue()
 

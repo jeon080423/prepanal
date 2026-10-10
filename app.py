@@ -646,6 +646,24 @@ def step5():
     st.subheader("데이터 미리보기")
     st.dataframe(df, use_container_width=True, height=400)
 
+    # 파일럿 진단 리포트 (규칙 기반 — 실제 데이터 통계만 사용, 환각 없음)
+    from core.diagnostics import diagnose
+    st.subheader("파일럿 진단 리포트")
+    st.caption("실제 응답 데이터에서 계산된 통계에만 근거합니다. 임계값을 넘지 않은 문제는 보고하지 않습니다.")
+    findings = diagnose(df, store.get("questions") or [])
+    if not findings:
+        st.success("진단 결과: 문제가 발견되지 않았습니다. 설문지가 정상적으로 작동합니다.")
+    else:
+        for f in findings:
+            severity_icon = "🔴" if f["심각도"] == "높음" else "🟡"
+            with st.container(border=True):
+                st.write(f"{severity_icon} **{f['문제']}**")
+                st.write(f"문항: {f['문항']}")
+                st.write(f"근거: {f['근거']}")
+                st.info(f"💡 해결책: {f['해결책']}")
+    # 진단 결과를 스토어에 저장 (엑셀 다운로드에서 사용)
+    store.set("diagnostics", findings)
+
     # 생성 분포 vs 학습 분포 비교
     learned = store.get("learned") or {}
     comp_qs = [
@@ -672,7 +690,9 @@ def step5():
     st.subheader("다운로드")
     c1, c2 = st.columns(2)
     with c1:
-        xlsx = export_service.to_excel_bytes(df, meta=meta)
+        xlsx = export_service.to_excel_bytes(
+            df, meta=meta, diagnostics=store.get("diagnostics") or []
+        )
         st.download_button(
             "엑셀 다운로드 (.xlsx)",
             data=xlsx,
