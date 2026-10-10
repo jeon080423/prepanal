@@ -46,17 +46,62 @@ class AIProvider(ABC):
         self.fallback_model = fallback_model
         self.cli_path = os.path.expanduser(cli)
         self.secret_name = secret_name
+        self._custom_key = ""  # 사용자가 직접 입력한 API 키 (세션 한정)
+
+    # -- 사용자 API 키 ------------------------------------------------------
+    def set_custom_key(self, api_key: str) -> None:
+        """사용자가 직접 입력한 API 키를 설정 (세션 메모리에만 보관)."""
+        self._custom_key = (api_key or "").strip()
+
+    def get_custom_key(self) -> str:
+        return self._custom_key
+
+    def has_custom_key(self) -> bool:
+        return bool(self._custom_key)
+
+    def clear_custom_key(self) -> None:
+        self._custom_key = ""
+
+    def test_key(self, api_key: str, timeout: int = 30) -> tuple[bool, str]:
+        """API 키 유효성을 사전 테스트. (실제 생성 전 가벼운 호출)
+
+        Returns: (성공 여부, 메시지)
+        """
+        api_key = (api_key or "").strip()
+        if not api_key:
+            return False, "API 키를 입력하세요."
+        try:
+            # 최소 토큰으로 가벼운 테스트 호출
+            self._call_rest(api_key, "Say OK.", self.default_model, timeout)
+            return True, "API 키가 유효합니다. ✅"
+        except RuntimeError as e:
+            err = str(e)
+            if "401" in err or "403" in err or "API_KEY_INVALID" in err or "invalid" in err.lower():
+                return False, "❌ 유효하지 않은 API 키입니다. 키를 확인하세요."
+            if "429" in err:
+                return False, "❌ 할당량 초과 (429). 잠시 후 다시 시도하세요."
+            return False, f"❌ 연결 실패: {err[:200]}"
+        except Exception as e:
+            return False, f"❌ 오류: {str(e)[:200]}"
 
     # -- 인증 ---------------------------------------------------------------
+    def _effective_key(self) -> str:
+        """사용자 입력 키 > st.secrets 순서로 반환."""
+        if self._custom_key:
+            return self._custom_key
+        return self._read_secret(self.secret_name)
+
     def is_available(self) -> bool:
-        return bool(self.cli_path and os.path.exists(self.cli_path)) or bool(self._read_secret(self.secret_name))
+        return bool(self.cli_path and os.path.exists(self.cli_path)) or bool(self._effective_key())
 
     def auth_status(self) -> tuple[bool, str]:
         if self.cli_path and os.path.exists(self.cli_path):
             return True, "로컬 CLI 인증 사용 가능"
+        if self._custom_key:
+            return True, "사용자 입력 API 키 사용 중"
         if self._read_secret(self.secret_name):
             return True, f"st.secrets의 {self.secret_name} 사용"
-        return False, f"인증 없음 — 로컬 CLI 또는 secrets의 {self.secret_name} 필요"
+        return False, f"인증 없음 — API 키를 직접 입력하거나 secrets에 {self.secret_name} 등록 필요"
 
     @staticmethod
     def _read_secret(name: str) -> str:
@@ -73,11 +118,11 @@ class AIProvider(ABC):
         model = model or self.default_model
         if self.cli_path and os.path.exists(self.cli_path):
             return self._call_cli(prompt, model, timeout)
-        api_key = self._read_secret(self.secret_name)
+        api_key = self._effective_key()
         if not api_key:
             raise RuntimeError(
-                f"API 키가 없습니다. Streamlit Cloud의 secrets에 "
-                f"{self.secret_name}를 등록하거나 로컬 CLI 환경을 사용하세요."
+                f"API 키가 없습니다. 사이드바에서 API 키를 직접 입력하거나, "
+                f"Streamlit Cloud의 secrets에 {self.secret_name}를 등록하세요."
             )
         try:
             return self._call_rest(api_key, prompt, model, timeout)

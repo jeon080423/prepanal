@@ -110,8 +110,57 @@ with st.sidebar:
 
     st.divider()
     st.subheader("AI 설정")
+
+    # AI 제공자 선택
+    from core.providers import PROVIDER_REGISTRY
+    provider_ids = list(PROVIDER_REGISTRY.keys())
+    provider_labels = {pid: PROVIDER_REGISTRY[pid].label for pid in provider_ids}
+    selected_pid = st.selectbox(
+        "AI 제공자",
+        options=provider_ids,
+        format_func=lambda pid: provider_labels[pid],
+        index=provider_ids.index(store.get("provider")) if store.get("provider") in provider_ids else 0,
+        key="provider_select",
+    )
+    if selected_pid != store.get("provider"):
+        store.set("provider", selected_pid)
+        st.rerun()
+
+    provider = get_provider(store.get("provider"))
+
+    # 사용자 API 키 직접 입력
+    st.caption("🔑 내 API 키 사용 (선택사항)")
+    user_key = st.text_input(
+        "API 키 직접 입력",
+        type="password",
+        placeholder=f"{provider.label} API 키를 입력하세요",
+        key=f"custom_key_{store.get('provider')}",
+        help="입력한 키는 브라우저 세션 메모리에만 보관되며, 서버에 저장되지 않습니다. 페이지를 새로고침하면 사라집니다.",
+    )
+    st.caption("⚠️ 입력한 API 키는 저장되지 않습니다. 브라우저를 닫거나 새로고침하면 다시 입력해야 합니다.")
+
+    col_test, col_clear = st.columns(2)
+    with col_test:
+        if st.button("키 테스트", use_container_width=True):
+            if not user_key.strip():
+                st.warning("먼저 API 키를 입력하세요.")
+            else:
+                with st.spinner("키 유효성 확인 중..."):
+                    ok_test, msg_test = provider.test_key(user_key)
+                if ok_test:
+                    provider.set_custom_key(user_key)
+                    st.success(msg_test)
+                    st.rerun()
+                else:
+                    st.error(msg_test)
+    with col_clear:
+        if provider.has_custom_key():
+            if st.button("키 지우기", use_container_width=True):
+                provider.clear_custom_key()
+                st.rerun()
+
     ok, msg = auth_status(store.get("provider"))
-    st.write(f"선택: **{get_provider(store.get('provider')).label}**")
+    st.write(f"선택: **{provider.label}**")
     st.caption(f"모델: {current_model()}")
     if ok:
         st.success(msg)
