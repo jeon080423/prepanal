@@ -196,55 +196,32 @@ st.markdown(
         color: #888888 !important;
         opacity: 1 !important;
     }
-    /* 액세스 코드 입력칸: 흰색 배경 (컨테이너·눈 버튼 포함) */
-    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder="액세스 코드"]) {
+    /* 사이드바 비밀번호 입력칸: 흰색 배경 + 검정 텍스트 */
+    [data-testid="stSidebar"] [data-baseweb="input"] {
         background-color: #FFFFFF !important;
     }
-    [data-testid="stSidebar"] input[placeholder="액세스 코드"] {
+    [data-testid="stSidebar"] [data-baseweb="input"] input {
         background-color: #FFFFFF !important;
         color: #000000 !important;
-        border: none !important;
     }
-    [data-testid="stSidebar"] input[placeholder="액세스 코드"]::placeholder {
+    [data-testid="stSidebar"] [data-baseweb="input"] input::placeholder {
         color: #999999 !important;
         opacity: 1 !important;
     }
-    [data-testid="stSidebar"] input[placeholder="액세스 코드"]:focus {
-        border: none !important;
-        box-shadow: none !important;
-    }
-    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder="액세스 코드"]) button {
+    /* 사이드바 모든 비밀번호 입력의 눈 버튼: 흰색 (입력칸이 흰색이므로) */
+    [data-testid="stSidebar"] [data-baseweb="input"] button {
         background-color: #FFFFFF !important;
-        border: none !important;
+        background: #FFFFFF !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder="액세스 코드"]) button svg {
+    [data-testid="stSidebar"] [data-baseweb="input"] button:hover {
+        background-color: #F0F0F0 !important;
+        background: #F0F0F0 !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"] button svg,
+    [data-testid="stSidebar"] [data-baseweb="input"] button span {
         fill: #666666 !important;
         color: #666666 !important;
-    }
-    /* API 키 입력칸도 흰색 배경 (컨테이너·눈 버튼 포함) */
-    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder*="API 키를 입력하세요"]) {
-        background-color: #FFFFFF !important;
-    }
-    [data-testid="stSidebar"] input[placeholder*="API 키를 입력하세요"] {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
-        border: none !important;
-    }
-    [data-testid="stSidebar"] input[placeholder*="API 키를 입력하세요"]::placeholder {
-        color: #999999 !important;
-        opacity: 1 !important;
-    }
-    [data-testid="stSidebar"] input[placeholder*="API 키를 입력하세요"]:focus {
-        border: none !important;
-        box-shadow: none !important;
-    }
-    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder*="API 키를 입력하세요"]) button {
-        background-color: #FFFFFF !important;
-        border: none !important;
-    }
-    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder*="API 키를 입력하세요"]) button svg {
-        fill: #666666 !important;
-        color: #666666 !important;
+        background-color: transparent !important;
     }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] label {
