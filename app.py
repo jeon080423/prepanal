@@ -246,10 +246,6 @@ st.markdown(
         fill: #666666 !important;
         color: #666666 !important;
     }
-    [data-testid="stSidebar"] [data-testid="stPassword"] button,
-    [data-testid="stSidebar"] button[kind="secondary"] {
-        background-color: #1A1A1A !important;
-    }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] label {
         color: #FFFFFF !important;
