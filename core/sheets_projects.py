@@ -28,20 +28,37 @@ HEADER = ["id", "name", "created_at", "updated_at"]
 
 
 def _get_client():
-    """Streamlit secrets에서 서비스 계정으로 gspread 클라이언트 생성."""
+    """AHPMASTER와 동일한 gcp_service_account secrets로 gspread 클라이언트 생성."""
     import streamlit as st
     from google.oauth2.service_account import Credentials
 
-    sa_json = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", "")
-    if not sa_json:
+    if "gcp_service_account" not in st.secrets:
         raise RuntimeError(
-            "GOOGLE_SERVICE_ACCOUNT이 설정되지 않았습니다. "
-            "Streamlit Cloud Secrets에 서비스 계정 JSON을 등록하세요."
+            "gcp_service_account이 설정되지 않았습니다. "
+            "AHPMASTER와 동일한 서비스 계정을 Streamlit Cloud Secrets에 등록하세요."
         )
-    if isinstance(sa_json, str):
-        sa_info = json.loads(sa_json)
+    raw_auth = st.secrets.get("gcp_service_account", {})
+    # dict(TOML) / JSON 문자열 / Base64 모두 지원 (AHPMASTER survey_manager와 동일)
+    if isinstance(raw_auth, dict) or hasattr(raw_auth, "keys"):
+        sa_info = dict(raw_auth)
+    elif isinstance(raw_auth, str):
+        import base64
+        import re
+        auth_str = raw_auth.strip().strip('"').strip("'")
+        try:
+            sa_info = json.loads(auth_str)
+        except json.JSONDecodeError:
+            clean_b64 = re.sub(r"\s+", "", auth_str)
+            missing = len(clean_b64) % 4
+            if missing:
+                clean_b64 += "=" * (4 - missing)
+            try:
+                decoded = base64.b64decode(clean_b64)
+            except Exception:
+                decoded = base64.urlsafe_b64decode(clean_b64)
+            sa_info = json.loads(decoded.decode("utf-8"))
     else:
-        sa_info = dict(sa_json)
+        raise RuntimeError("gcp_service_account 형식을 인식할 수 없습니다.")
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -101,10 +118,10 @@ class SheetsProjectStore:
 
     @staticmethod
     def is_configured() -> bool:
-        """Google Sheets 연동 설정 여부."""
+        """Google Sheets 연동 설정 여부 (AHPMASTER와 동일한 gcp_service_account)."""
         try:
             import streamlit as st
-            return bool(st.secrets.get("GOOGLE_SERVICE_ACCOUNT", ""))
+            return "gcp_service_account" in st.secrets
         except Exception:
             return False
 
@@ -112,11 +129,13 @@ class SheetsProjectStore:
     def setup_guide() -> str:
         return """**Google Sheets 연동 설정 방법:**
 
-1. Google Cloud Console에서 서비스 계정을 만들고 JSON 키를 다운로드
-2. 새 Google 스프레드시트를 만들고 서비스 계정 이메일과 공유 (편집자 권한)
-3. Streamlit Cloud → 앱 Settings → Secrets에 추가:
-   - `GOOGLE_SERVICE_ACCOUNT`: 서비스 계정 JSON 전체 (한 줄 문자열)
-   - `PROJECTS_SHEET_ID`: 스프레드시트 URL의 `/d/` 다음 ID 부분
+AHPMASTER와 동일한 서비스 계정을 사용합니다.
+
+1. AHPMASTER Streamlit Cloud → Settings → Secrets에서
+   `gcp_service_account` 값을 복사
+2. PrePanel Streamlit Cloud → Settings → Secrets에 붙여넣기
+3. 새 Google 스프레드시트를 만들고 서비스 계정 이메일과 공유 (편집자 권한)
+4. Secrets에 `PROJECTS_SHEET_ID` 추가 (스프레드시트 URL의 `/d/` 다음 ID 부분)
 """
 
     def list_projects(self) -> list[dict]:
