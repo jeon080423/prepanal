@@ -196,6 +196,21 @@ st.markdown(
         color: #888888 !important;
         opacity: 1 !important;
     }
+    /* 비밀번호 보기(눈) 아이콘 버튼: 흰 배경 제거 */
+    [data-testid="stSidebar"] [data-testid="stTextInput"] button,
+    [data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div:last-child button,
+    [data-testid="stSidebar"] [data-baseweb="input"] button {
+        background-color: #1A1A1A !important;
+        color: #FFFFFF !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"] button svg {
+        fill: #CCCCCC !important;
+        color: #CCCCCC !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"] {
+        background-color: #1A1A1A !important;
+    }
     [data-testid="stSidebar"] [data-testid="stPassword"] button,
     [data-testid="stSidebar"] button[kind="secondary"] {
         background-color: #1A1A1A !important;
