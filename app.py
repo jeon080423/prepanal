@@ -73,6 +73,38 @@ def init_state():
 init_state()
 
 
+# ----------------------------------------------------------------------------
+# 액세스 코드 게이트 (비밀번호 없이 코드만으로 입장)
+# 코드는 Streamlit Secrets의 ACCESS_CODE에 설정 (레포에 하드코딩 금지)
+# ----------------------------------------------------------------------------
+def access_gate() -> bool:
+    """액세스 코드 확인. 통과하면 True."""
+    if st.session_state.get("access_granted"):
+        return True
+
+    st.markdown("## 🔒 PrePanel")
+    st.caption("액세스 코드를 입력하세요.")
+    code = st.text_input("액세스 코드", type="password", key="access_code_input")
+    if st.button("입장하기", type="primary"):
+        expected = ""
+        try:
+            expected = st.secrets.get("ACCESS_CODE", "")
+        except Exception:
+            expected = ""
+        if not expected:
+            st.error("서버에 액세스 코드가 설정되지 않았습니다. 관리자에게 문의하세요.")
+        elif code == expected:
+            st.session_state["access_granted"] = True
+            st.rerun()
+        else:
+            st.error("코드가 올바르지 않습니다.")
+    return False
+
+
+if not access_gate():
+    st.stop()
+
+
 def goto(step: int):
     store.set("step", step)
     # 사이드바 radio 위젯 상태도 함께 동기화 (위젯 state가 우선되어 되돌아가는 버그 방지)
