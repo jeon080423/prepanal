@@ -74,35 +74,27 @@ init_state()
 
 
 # ----------------------------------------------------------------------------
-# 액세스 코드 게이트 (비밀번호 없이 코드만으로 입장)
+# 액세스 코드 (사이드바 입력, 미입력 시 화면은 보이지만 생성 기능 제한)
 # 코드는 Streamlit Secrets의 ACCESS_CODE에 설정 (레포에 하드코딩 금지)
 # ----------------------------------------------------------------------------
-def access_gate() -> bool:
-    """액세스 코드 확인. 통과하면 True."""
-    if st.session_state.get("access_granted"):
-        return True
+def is_code_verified() -> bool:
+    """액세스 코드가 확인됐는지 반환."""
+    return bool(st.session_state.get("access_granted"))
 
-    st.markdown("## 🔒 PrePanel")
-    st.caption("액세스 코드를 입력하세요.")
-    code = st.text_input("액세스 코드", type="password", key="access_code_input")
-    if st.button("입장하기", type="primary"):
+
+def verify_access_code(code: str) -> tuple[bool, str]:
+    """코드 검증. (성공 여부, 메시지) 반환."""
+    expected = ""
+    try:
+        expected = st.secrets.get("ACCESS_CODE", "")
+    except Exception:
         expected = ""
-        try:
-            expected = st.secrets.get("ACCESS_CODE", "")
-        except Exception:
-            expected = ""
-        if not expected:
-            st.error("서버에 액세스 코드가 설정되지 않았습니다. 관리자에게 문의하세요.")
-        elif code == expected:
-            st.session_state["access_granted"] = True
-            st.rerun()
-        else:
-            st.error("코드가 올바르지 않습니다.")
-    return False
-
-
-if not access_gate():
-    st.stop()
+    if not expected:
+        return False, "서버에 액세스 코드가 설정되지 않았습니다."
+    if code == expected:
+        st.session_state["access_granted"] = True
+        return True, "코드가 확인되었습니다."
+    return False, "코드가 올바르지 않습니다."
 
 
 def goto(step: int):
@@ -150,6 +142,24 @@ with st.sidebar:
     )
     st.title(APP_TITLE)
     st.caption(APP_SUBTITLE)
+
+    # 액세스 코드 입력 (사이드바)
+    if is_code_verified():
+        st.success("🔓 액세스 코드 확인됨")
+    else:
+        with st.expander("🔒 액세스 코드 입력", expanded=True):
+            code_input = st.text_input(
+                "액세스 코드", type="password", key="sidebar_code_input",
+                label_visibility="collapsed", placeholder="액세스 코드",
+            )
+            if st.button("코드 확인", key="sidebar_code_btn"):
+                ok, msg = verify_access_code(code_input)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
     st.divider()
 
     step_labels = [f"{i + 1}. {name}" for i, name in enumerate(STEPS)]
@@ -757,8 +767,11 @@ def step4():
     n = st.number_input("생성할 응답자 수", min_value=1, max_value=200, value=30, step=1)
 
     can_run = ok and len(store.get("questions")) > 0
+    code_ok = is_code_verified()
     if st.button("생성 시작", type="primary", disabled=not can_run):
-        if not ok:
+        if not code_ok:
+            st.error("🔒 액세스 코드를 입력해야 생성을 시작할 수 있습니다. (좌측 사이드바에서 입력)")
+        elif not ok:
             st.error("AI 인증이 필요합니다.")
         else:
             progress = st.progress(0.0, text="생성 중...")
