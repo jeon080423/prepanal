@@ -196,32 +196,46 @@ st.markdown(
         color: #888888 !important;
         opacity: 1 !important;
     }
-    /* 사이드바 비밀번호 입력칸: 흰색 배경 + 검정 텍스트 */
-    [data-testid="stSidebar"] [data-baseweb="input"] {
+    /* 사이드바 비밀번호 입력칸: 전체 흰색 (컨테이너·내부 div·input 모두) */
+    [data-testid="stSidebar"] [data-baseweb="input"],
+    [data-testid="stSidebar"] [data-baseweb="input"] > div,
+    [data-testid="stSidebar"] [data-baseweb="input"] div {
         background-color: #FFFFFF !important;
+        background: #FFFFFF !important;
     }
     [data-testid="stSidebar"] [data-baseweb="input"] input {
         background-color: #FFFFFF !important;
+        background: #FFFFFF !important;
         color: #000000 !important;
+        border: none !important;
+        box-shadow: none !important;
     }
     [data-testid="stSidebar"] [data-baseweb="input"] input::placeholder {
         color: #999999 !important;
         opacity: 1 !important;
     }
-    /* 사이드바 모든 비밀번호 입력의 눈 버튼: 흰색 (입력칸이 흰색이므로) */
+    [data-testid="stSidebar"] [data-baseweb="input"] input:focus {
+        outline: none !important;
+        box-shadow: none !important;
+    }
+    /* 눈 아이콘 버튼: 흰 배경 + 검정 테두리 + 검정 아이콘 */
     [data-testid="stSidebar"] [data-baseweb="input"] button {
         background-color: #FFFFFF !important;
         background: #FFFFFF !important;
+        border: 1px solid #000000 !important;
+        border-radius: 4px !important;
     }
     [data-testid="stSidebar"] [data-baseweb="input"] button:hover {
         background-color: #F0F0F0 !important;
         background: #F0F0F0 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="input"] button svg,
-    [data-testid="stSidebar"] [data-baseweb="input"] button span {
-        fill: #666666 !important;
-        color: #666666 !important;
+    [data-testid="stSidebar"] [data-baseweb="input"] button span,
+    [data-testid="stSidebar"] [data-baseweb="input"] button div {
+        fill: #000000 !important;
+        color: #000000 !important;
         background-color: transparent !important;
+        background: transparent !important;
     }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] label {
