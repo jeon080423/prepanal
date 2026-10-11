@@ -221,6 +221,31 @@ st.markdown(
         fill: #666666 !important;
         color: #666666 !important;
     }
+    /* API 키 입력칸도 흰색 배경 (컨테이너·눈 버튼 포함) */
+    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder*="API 키를 입력하세요"]) {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] input[placeholder*="API 키를 입력하세요"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] input[placeholder*="API 키를 입력하세요"]::placeholder {
+        color: #999999 !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSidebar"] input[placeholder*="API 키를 입력하세요"]:focus {
+        border: none !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder*="API 키를 입력하세요"]) button {
+        background-color: #FFFFFF !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder*="API 키를 입력하세요"]) button svg {
+        fill: #666666 !important;
+        color: #666666 !important;
+    }
     [data-testid="stSidebar"] [data-testid="stPassword"] button,
     [data-testid="stSidebar"] button[kind="secondary"] {
         background-color: #1A1A1A !important;
