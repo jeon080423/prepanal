@@ -18,7 +18,8 @@ from config import (APP_SUBTITLE, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
                     METHODOLOGY_NOTE, SAMPLE_XLSX_PATH)
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
-                  auth_status, get_provider, get_question_type)
+                  auth_status, get_provider, get_question_type,
+                  ProjectStore, PROJECT_STATE_KEYS)
 
 STEPS = ["설문 설계", "페르소나 설계", "분포 학습", "가상 응답 생성", "결과"]
 
@@ -68,6 +69,7 @@ def init_state():
     store.set_default("model_override", "")
     store.set_default("gen_cache", {})
     store.set_default("show_theory", False)
+    store.set_default("project_id", None)
 
 
 init_state()
@@ -284,6 +286,118 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.error(msg)
+
+    st.divider()
+
+    # 프로젝트 관리
+    _project_store = ProjectStore()
+
+    def _save_current_project():
+        pid = store.get("project_id")
+        if not pid:
+            return
+        state = {k: store.get(k) for k in PROJECT_STATE_KEYS}
+        # 모델 선택도 저장
+        prov_id = store.get("provider")
+        state["model_select"] = store.get(f"model_select_{prov_id}")
+        _project_store.save_project(pid, state)
+
+    def _load_project_to_store(pid: str):
+        state = _project_store.load_project(pid)
+        # 기존 상태 초기화 후 불러오기
+        for k in PROJECT_STATE_KEYS:
+            store.set(k, state.get(k))
+        # 모델 선택 복원
+        prov_id = state.get("provider", "gemini")
+        store.set("provider", prov_id)
+        if state.get("model_select"):
+            store.set(f"model_select_{prov_id}", state["model_select"])
+        store.set("project_id", pid)
+        store.set("step", 1)
+        # 결과 관련 캐시 초기화
+        store.set("gen_cache", {})
+
+    # 프로젝트 목록
+    projects = _project_store.list_projects()
+    current_pid = store.get("project_id")
+
+    # 저장된 프로젝트가 없으면 자동 생성
+    if not projects:
+        new_pid = _project_store.create_project("내 첫 프로젝트")
+        store.set("project_id", new_pid)
+        projects = _project_store.list_projects()
+        current_pid = new_pid
+
+    # 현재 프로젝트가 목록에 없으면 첫 번째로 설정
+    if current_pid not in [p["id"] for p in projects]:
+        current_pid = projects[0]["id"]
+        _load_project_to_store(current_pid)
+
+    st.subheader("📁 프로젝트")
+    proj_options = [p["id"] for p in projects]
+    proj_names = {p["id"]: p["name"] for p in projects}
+    try:
+        proj_idx = proj_options.index(current_pid)
+    except ValueError:
+        proj_idx = 0
+    selected_pid = st.selectbox(
+        "프로젝트 선택",
+        options=proj_options,
+        format_func=lambda pid: proj_names.get(pid, pid),
+        index=proj_idx,
+        key="project_selector",
+        label_visibility="collapsed",
+    )
+    # 프로젝트 전환 시: 현재 작업 저장 후 새 프로젝트 불러오기
+    if selected_pid != current_pid:
+        _save_current_project()
+        _load_project_to_store(selected_pid)
+        st.rerun()
+
+    col_new, col_save = st.columns(2)
+    with col_new:
+        if st.button("➕ 새 프로젝트", use_container_width=True, key="btn_new_project"):
+            _save_current_project()
+            new_pid = _project_store.create_project(f"프로젝트 {len(projects) + 1}")
+            # 새 프로젝트는 빈 상태로 시작
+            store.set("project_id", new_pid)
+            store.set("questions", [])
+            store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+            store.set("transcripts", [])
+            store.set("use_precision", False)
+            store.set("learned", None)
+            store.set("learned_file", None)
+            store.set("results_df", None)
+            store.set("gen_meta", None)
+            store.set("gen_cache", {})
+            store.set("step", 1)
+            st.rerun()
+    with col_save:
+        if st.button("💾 저장", use_container_width=True, key="btn_save_project"):
+            _save_current_project()
+            st.success("저장되었습니다.")
+
+    # 이름 변경·삭제
+    with st.expander("프로젝트 관리", expanded=False):
+        cur_meta = _project_store.get_meta(selected_pid)
+        new_name = st.text_input(
+            "프로젝트 이름",
+            value=cur_meta.get("name", ""),
+            key="project_rename_input",
+        )
+        if st.button("이름 변경", key="btn_rename_project"):
+            _project_store.rename_project(selected_pid, new_name)
+            st.rerun()
+        st.divider()
+        if st.button("🗑️ 프로젝트 삭제", key="btn_delete_project", type="secondary"):
+            if len(projects) <= 1:
+                st.error("마지막 프로젝트는 삭제할 수 없습니다.")
+            else:
+                _project_store.delete_project(selected_pid)
+                # 다른 프로젝트로 전환
+                remaining = [p for p in projects if p["id"] != selected_pid]
+                _load_project_to_store(remaining[0]["id"])
+                st.rerun()
 
     st.divider()
 
@@ -932,6 +1046,8 @@ def step4():
                         f"⚠️ {current_model()}의 할당량이 소진되어 "
                         f"{used_model}(으)로 자동 전환되었습니다."
                     )
+                # 생성 완료 후 프로젝트 자동 저장
+                _save_current_project()
             except Exception as e:
                 st.error(f"생성 실패: {e}")
 

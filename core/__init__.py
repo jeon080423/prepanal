@@ -7,6 +7,7 @@ core/* 하위 모듈을 직접 import해도 되지만, 이 __init__이 권장 �
 from .models import LearnedDist, Persona, Question, Transcript
 from .persona import (build_persona_texts, persona_to_text, sample_persona,
                       weighted_choice)
+from .projects import PROJECT_STATE_KEYS, ProjectStore
 from .providers import (AIProvider, PROVIDER_REGISTRY, UnknownProviderError,
                         auth_status, generate, get_provider, register_provider)
 from .question_types import (QUESTION_TYPE_REGISTRY, QuestionType,
@@ -38,4 +39,6 @@ __all__ = [
     "QuestionnaireService", "LearningService", "GenerationService",
     "ExportService", "PdfQuestionnaireService",
     "Store", "MemoryStore", "SessionStore",
+    # projects
+    "ProjectStore", "PROJECT_STATE_KEYS",
 ]
