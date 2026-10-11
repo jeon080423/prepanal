@@ -196,20 +196,30 @@ st.markdown(
         color: #888888 !important;
         opacity: 1 !important;
     }
-    /* 비밀번호 보기(눈) 아이콘 버튼: 흰 배경 제거 */
-    [data-testid="stSidebar"] [data-testid="stTextInput"] button,
-    [data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div:last-child button,
-    [data-testid="stSidebar"] [data-baseweb="input"] button {
-        background-color: #1A1A1A !important;
-        color: #FFFFFF !important;
+    /* 액세스 코드 입력칸: 흰색 배경 (컨테이너·눈 버튼 포함) */
+    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder="액세스 코드"]) {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] input[placeholder="액세스 코드"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
         border: none !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] button svg {
-        fill: #CCCCCC !important;
-        color: #CCCCCC !important;
+    [data-testid="stSidebar"] input[placeholder="액세스 코드"]::placeholder {
+        color: #999999 !important;
+        opacity: 1 !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] {
-        background-color: #1A1A1A !important;
+    [data-testid="stSidebar"] input[placeholder="액세스 코드"]:focus {
+        border: none !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder="액세스 코드"]) button {
+        background-color: #FFFFFF !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"]:has(input[placeholder="액세스 코드"]) button svg {
+        fill: #666666 !important;
+        color: #666666 !important;
     }
     [data-testid="stSidebar"] [data-testid="stPassword"] button,
     [data-testid="stSidebar"] button[kind="secondary"] {
