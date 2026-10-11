@@ -8,6 +8,7 @@ from .models import LearnedDist, Persona, Question, Transcript
 from .persona import (build_persona_texts, persona_to_text, sample_persona,
                       weighted_choice)
 from .projects import PROJECT_STATE_KEYS, ProjectStore
+from .sheets_projects import SheetsProjectStore
 from .providers import (AIProvider, PROVIDER_REGISTRY, UnknownProviderError,
                         auth_status, generate, get_provider, register_provider)
 from .question_types import (QUESTION_TYPE_REGISTRY, QuestionType,
@@ -40,5 +41,5 @@ __all__ = [
     "ExportService", "PdfQuestionnaireService",
     "Store", "MemoryStore", "SessionStore",
     # projects
-    "ProjectStore", "PROJECT_STATE_KEYS",
+    "ProjectStore", "PROJECT_STATE_KEYS", "SheetsProjectStore",
 ]

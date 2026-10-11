@@ -1,0 +1,227 @@
+"""Google Sheets 기반 프로젝트 저장소 (core/sheets_projects.py)
+
+Streamlit Cloud의 임시 파일시스템 문제를 해결하기 위해
+프로젝트 데이터를 Google Sheets에 저장한다.
+
+설정 (Streamlit Secrets):
+- GOOGLE_SERVICE_ACCOUNT: 서비스 계정 JSON (문자열)
+- PROJECTS_SHEET_ID: 스프레드시트 ID (없으면 자동 생성 시도)
+
+스프레드시트 구조:
+- "projects" 시트: id | name | created_at | updated_at | data_1 | data_2 | ...
+  (data는 JSON을 40000자씩 분할 저장 — 셀 50000자 제한 대응)
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime
+
+import pandas as pd
+
+from .projects import _json_safe
+
+# 셀 문자 제한 (여유 있게 40000)
+CHUNK_SIZE = 40000
+HEADER = ["id", "name", "created_at", "updated_at"]
+
+
+def _get_client():
+    """Streamlit secrets에서 서비스 계정으로 gspread 클라이언트 생성."""
+    import streamlit as st
+    from google.oauth2.service_account import Credentials
+
+    sa_json = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", "")
+    if not sa_json:
+        raise RuntimeError(
+            "GOOGLE_SERVICE_ACCOUNT이 설정되지 않았습니다. "
+            "Streamlit Cloud Secrets에 서비스 계정 JSON을 등록하세요."
+        )
+    if isinstance(sa_json, str):
+        sa_info = json.loads(sa_json)
+    else:
+        sa_info = dict(sa_json)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
+    import gspread
+    return gspread.authorize(creds)
+
+
+def _get_spreadsheet(client):
+    """스프레드시트 열기 (없으면 생성)."""
+    import streamlit as st
+    sheet_id = st.secrets.get("PROJECTS_SHEET_ID", "")
+    if sheet_id:
+        return client.open_by_key(sheet_id)
+    # 자동 생성
+    sh = client.create("PrePanel Projects")
+    return sh
+
+
+def _get_worksheet(sh):
+    """projects 시트 가져오기 (없으면 생성)."""
+    try:
+        ws = sh.worksheet("projects")
+    except Exception:
+        ws = sh.add_worksheet(title="projects", rows=100, cols=20)
+        ws.append_row(HEADER)
+    return ws
+
+
+def _split_data(data_str: str) -> list[str]:
+    return [data_str[i:i + CHUNK_SIZE]
+            for i in range(0, len(data_str), CHUNK_SIZE)]
+
+
+def _join_data(row: list[str], data_start_col: int) -> str:
+    return "".join(cell for cell in row[data_start_col:] if cell)
+
+
+class SheetsProjectStore:
+    """Google Sheets 기반 프로젝트 저장소.
+
+    FileProjectStore(ProjectStore)와 동일한 인터페이스.
+    """
+
+    def __init__(self):
+        self._client = None
+        self._sh = None
+        self._ws = None
+
+    def _ensure(self):
+        if self._ws is None:
+            self._client = _get_client()
+            self._sh = _get_spreadsheet(self._client)
+            self._ws = _get_worksheet(self._sh)
+        return self._ws
+
+    @staticmethod
+    def is_configured() -> bool:
+        """Google Sheets 연동 설정 여부."""
+        try:
+            import streamlit as st
+            return bool(st.secrets.get("GOOGLE_SERVICE_ACCOUNT", ""))
+        except Exception:
+            return False
+
+    @staticmethod
+    def setup_guide() -> str:
+        return """**Google Sheets 연동 설정 방법:**
+
+1. Google Cloud Console에서 서비스 계정을 만들고 JSON 키를 다운로드
+2. 새 Google 스프레드시트를 만들고 서비스 계정 이메일과 공유 (편집자 권한)
+3. Streamlit Cloud → 앱 Settings → Secrets에 추가:
+   - `GOOGLE_SERVICE_ACCOUNT`: 서비스 계정 JSON 전체 (한 줄 문자열)
+   - `PROJECTS_SHEET_ID`: 스프레드시트 URL의 `/d/` 다음 ID 부분
+"""
+
+    def list_projects(self) -> list[dict]:
+        ws = self._ensure()
+        records = ws.get_all_records()
+        projects = []
+        for r in records:
+            if not r.get("id"):
+                continue
+            projects.append({
+                "id": r["id"],
+                "name": r.get("name", r["id"]),
+                "created_at": r.get("created_at", ""),
+                "updated_at": r.get("updated_at", ""),
+            })
+        projects.sort(key=lambda p: p["updated_at"], reverse=True)
+        return projects
+
+    def _find_row(self, project_id: str) -> int | None:
+        """프로젝트 ID의 행 번호 (1-based). 헤더 제외."""
+        ws = self._ensure()
+        ids = ws.col_values(1)
+        for i, v in enumerate(ids[1:], start=2):
+            if v == project_id:
+                return i
+        return None
+
+    def create_project(self, name: str) -> str:
+        ws = self._ensure()
+        project_id = uuid.uuid4().hex[:12]
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ws.append_row([project_id, name.strip() or "새 프로젝트", now, now])
+        return project_id
+
+    def save_project(self, project_id: str, state: dict) -> None:
+        ws = self._ensure()
+        # DataFrame → records 변환
+        serializable = {}
+        for k, v in state.items():
+            if k == "results_df" and isinstance(v, pd.DataFrame):
+                serializable[k] = {"__dataframe__": True,
+                                   "records": v.to_dict("records")}
+            else:
+                serializable[k] = _json_safe(v)
+        data_str = json.dumps(serializable, ensure_ascii=False)
+        chunks = _split_data(data_str)
+
+        row_num = self._find_row(project_id)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        if row_num is None:
+            # 새로 추가
+            ws.append_row([project_id, "새 프로젝트", now, now] + chunks)
+        else:
+            # 기존 행 업데이트: A:D 메타 + E부터 데이터 청크
+            # updated_at 갱신
+            ws.update_cell(row_num, 4, now)
+            # 기존 데이터 영역 지우기 (충분한 범위)
+            ws.update(f"E{row_num}:Z{row_num}",
+                      [[""] * 22], value_input_option="RAW")
+            if chunks:
+                end_col = chr(ord("E") + len(chunks) - 1)
+                # Z를 넘어가면 확장 (실용적으로 22개면 880KB — 충분)
+                ws.update(f"E{row_num}:{end_col}{row_num}",
+                          [chunks], value_input_option="RAW")
+
+    def load_project(self, project_id: str) -> dict:
+        ws = self._ensure()
+        row_num = self._find_row(project_id)
+        if row_num is None:
+            return {}
+        row = ws.row_values(row_num)
+        data_str = _join_data(row, 4)
+        if not data_str.strip():
+            return {}
+        state = json.loads(data_str)
+        if isinstance(state.get("results_df"), dict):
+            df_info = state["results_df"]
+            if df_info.get("__dataframe__"):
+                records = df_info.get("records", [])
+                state["results_df"] = pd.DataFrame(records) if records else None
+        return state
+
+    def get_meta(self, project_id: str) -> dict:
+        ws = self._ensure()
+        row_num = self._find_row(project_id)
+        if row_num is None:
+            return {}
+        row = ws.row_values(row_num)
+        return {
+            "id": row[0] if len(row) > 0 else "",
+            "name": row[1] if len(row) > 1 else "",
+            "created_at": row[2] if len(row) > 2 else "",
+            "updated_at": row[3] if len(row) > 3 else "",
+        }
+
+    def rename_project(self, project_id: str, new_name: str) -> None:
+        ws = self._ensure()
+        row_num = self._find_row(project_id)
+        if row_num is None:
+            return
+        ws.update_cell(row_num, 2, new_name.strip())
+        ws.update_cell(row_num, 4, datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+    def delete_project(self, project_id: str) -> None:
+        ws = self._ensure()
+        row_num = self._find_row(project_id)
+        if row_num is not None:
+            ws.delete_rows(row_num)

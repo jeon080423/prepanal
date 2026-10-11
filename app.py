@@ -19,7 +19,7 @@ from config import (APP_SUBTITLE, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type,
-                  ProjectStore, PROJECT_STATE_KEYS)
+                  ProjectStore, PROJECT_STATE_KEYS, SheetsProjectStore)
 
 STEPS = ["설문 설계", "페르소나 설계", "분포 학습", "가상 응답 생성", "결과"]
 
@@ -289,8 +289,13 @@ with st.sidebar:
 
     st.divider()
 
-    # 프로젝트 관리
-    _project_store = ProjectStore()
+    # 프로젝트 관리 (Google Sheets 우선, 미설정 시 로컬 파일)
+    if SheetsProjectStore.is_configured():
+        _project_store = SheetsProjectStore()
+        _storage_label = "☁️ Google Sheets"
+    else:
+        _project_store = ProjectStore()
+        _storage_label = "💻 로컬 (리부트 시 삭제됨)"
 
     def _save_current_project():
         pid = store.get("project_id")
@@ -334,6 +339,10 @@ with st.sidebar:
         _load_project_to_store(current_pid)
 
     st.subheader("📁 프로젝트")
+    st.caption(f"저장소: {_storage_label}")
+    if not SheetsProjectStore.is_configured():
+        with st.expander("Google Sheets 연동 설정", expanded=False):
+            st.markdown(SheetsProjectStore.setup_guide())
     proj_options = [p["id"] for p in projects]
     proj_names = {p["id"]: p["name"] for p in projects}
     try:

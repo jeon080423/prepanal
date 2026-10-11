@@ -5,3 +5,5 @@ plotly
 pypdf
 python-docx
 olefile
+gspread
+google-auth
