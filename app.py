@@ -133,7 +133,7 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background-color: #000000;
+        background: linear-gradient(180deg, #000000 0%, #1C1C1E 60%, #2C2C2E 100%);
     }
     [data-testid="stSidebar"] * {
         color: #FFFFFF !important;
@@ -152,28 +152,41 @@ st.markdown(
         border: 1px solid #555555 !important;
     }
     [data-testid="stSidebar"] button:hover {
-        background-color: #333333 !important;
-        border-color: #FFD400 !important;
+        background-color: #3A3A3C !important;
+        border-color: #6E6E73 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="radio"] div {
         color: #FFFFFF !important;
     }
-    [data-testid="stSidebar"] hr {
-        border-color: #333333 !important;
+    /* 선택된 라디오 버튼 강조색: 차콜 */
+    [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child {
+        border-color: #8E8E93 !important;
+        background-color: #48484A !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child > div {
+        background-color: #D1D1D6 !important;
+    }
+    /* 포커스 강조색: 차콜 */
+    [data-testid="stSidebar"] input:focus {
+        border-color: #8E8E93 !important;
+        box-shadow: 0 0 0 1px #8E8E93 !important;
     }
     [data-testid="stSidebar"] .stExpander {
-        background-color: #111111 !important;
-        border: 1px solid #333333 !important;
+        background-color: rgba(28, 28, 30, 0.7) !important;
+        border: 1px solid #3A3A3C !important;
     }
     [data-testid="stSidebar"] details {
-        background-color: #111111 !important;
+        background-color: rgba(28, 28, 30, 0.7) !important;
     }
     [data-testid="stSidebar"] details summary {
-        background-color: #111111 !important;
+        background-color: transparent !important;
         color: #FFFFFF !important;
     }
     [data-testid="stSidebar"] details summary:hover {
-        background-color: #1A1A1A !important;
+        background-color: #2C2C2E !important;
+    }
+    [data-testid="stSidebar"] hr {
+        border-color: #3A3A3C !important;
     }
     [data-testid="stSidebar"] details summary svg {
         fill: #FFFFFF !important;
