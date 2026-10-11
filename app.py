@@ -122,7 +122,28 @@ def current_model() -> str:
 # ----------------------------------------------------------------------------
 # 사이드바
 # ----------------------------------------------------------------------------
+def _metrix_ci_b64() -> str:
+    """메트릭스 CI PNG를 base64로 인코딩 (사이드바 표시용)."""
+    import base64
+    from pathlib import Path
+    p = Path(__file__).parent / "assets" / "metrix_ci.png"
+    if p.exists():
+        return base64.b64encode(p.read_bytes()).decode("ascii")
+    return ""
+
+
 with st.sidebar:
+    # 메트릭스 CI (흰색 로고이므로 검은 배경에 표시)
+    st.markdown(
+        """
+        <div style="background-color: #000000; padding: 12px 16px;
+                    border-radius: 8px; margin-bottom: 12px; text-align: center;">
+            <img src="data:image/png;base64,{logo_b64}"
+                 style="height: 36px; vertical-align: middle;" alt="MetriX CI">
+        </div>
+        """.format(logo_b64=_metrix_ci_b64()),
+        unsafe_allow_html=True,
+    )
     st.title(APP_TITLE)
     st.caption(APP_SUBTITLE)
     st.divider()
