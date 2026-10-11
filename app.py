@@ -309,9 +309,21 @@ with st.sidebar:
 
     def _load_project_to_store(pid: str):
         state = _project_store.load_project(pid)
-        # 기존 상태 초기화 후 불러오기
+        # 기존 상태 초기화 후 불러오기 (없는 키는 기본값)
+        defaults = {
+            "questions": [],
+            "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
+            "transcripts": [],
+            "use_precision": False,
+            "learned": None,
+            "learned_file": None,
+            "results_df": None,
+            "gen_meta": None,
+            "provider": "gemini",
+        }
         for k in PROJECT_STATE_KEYS:
-            store.set(k, state.get(k))
+            v = state.get(k)
+            store.set(k, v if v is not None else defaults.get(k))
         # 모델 선택 복원
         prov_id = state.get("provider", "gemini")
         store.set("provider", prov_id)
