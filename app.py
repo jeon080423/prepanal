@@ -396,11 +396,11 @@ def step1():
                 store.set("questions", q_service.load_sample_questions())
                 st.rerun()
 
-    # 설문지 파일 자동 인식 (PDF/HWPX/DOC)
-    with st.expander("📄 설문지 파일에서 자동 인식 (PDF/HWPX/DOC)", expanded=False):
+    # 설문지 파일 자동 인식 (PDF/HWPX/DOC/DOCX)
+    with st.expander("📄 설문지 파일에서 자동 인식 (PDF/HWPX/DOC/DOCX)", expanded=False):
         st.caption("설문지 파일을 업로드하면 AI가 문항·보기·분기 로직을 자동 파싱합니다.")
         doc_file = st.file_uploader(
-            "파일 선택 (PDF, HWPX, DOC)", type=["pdf", "hwpx", "doc"], key="pdf_upload")
+            "파일 선택 (PDF, HWPX, DOC, DOCX)", type=["pdf", "hwpx", "doc", "docx"], key="pdf_upload")
         if doc_file is not None:
             if st.button("문항 자동 인식 시작", type="primary", key="pdf_parse"):
                 with st.spinner("파일을 분석하고 있습니다..."):

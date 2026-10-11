@@ -531,8 +531,31 @@ class PdfQuestionnaireService:
         return result
 
     @staticmethod
+    def extract_docx_text(docx_bytes: bytes) -> str:
+        """Word(.docx)에서 텍스트를 추출합니다."""
+        from docx import Document
+
+        doc = Document(io.BytesIO(docx_bytes))
+        parts = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+        # 표 안의 텍스트도 추출
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    text = cell.text.strip()
+                    if text:
+                        parts.append(text)
+        result = "\n".join(parts)
+        if not result.strip():
+            raise ValueError("DOCX에서 텍스트를 추출하지 못했습니다.")
+        return result
+
+    @staticmethod
     def extract_text_auto(file_bytes: bytes, filename: str) -> str:
-        """파일 확장자에 따라 텍스트를 자동 추출합니다. (pdf/hwpx/doc)"""
+        """파일 확장자에 따라 텍스트를 자동 추출합니다. (pdf/hwpx/doc/docx)"""
         from pathlib import Path
         ext = Path(filename).suffix.lower()
         if ext == ".pdf":
@@ -541,8 +564,10 @@ class PdfQuestionnaireService:
             return PdfQuestionnaireService.extract_hwpx_text(file_bytes)
         if ext == ".doc":
             return PdfQuestionnaireService.extract_doc_text(file_bytes)
+        if ext == ".docx":
+            return PdfQuestionnaireService.extract_docx_text(file_bytes)
         raise ValueError(f"지원하지 않는 파일 형식입니다: {ext} "
-                         "(pdf, hwpx, doc만 지원)")
+                         "(pdf, hwpx, doc, docx만 지원)")
 
     @staticmethod
     def parse_questions(pdf_text: str, provider_id: str = "gemini") -> list[dict]:
