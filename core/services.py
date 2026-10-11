@@ -129,7 +129,7 @@ class GenerationService:
         문항마다 레지스트리 우선순위대로 전략을 매칭한다:
         - 학습된 분포가 있는 선택형 → 분포학습 (API 호출 없음)
         - 고정밀 컨텍스트의 선택형 → 고정밀 (인터뷰 기반)
-        - 나머지 선택형 → 분포추출 (Prolific 2026 방식)
+        - 나머지 선택형 → 분포추출 (Prolific Gordon et al. 2026 방식)
         - 주관식 → 주관식 생성 (LLM 배치)
         """
         rng = random.Random(seed)

@@ -209,5 +209,6 @@ def test_memory_store():
 
 
 def test_methodology_note_mentions_research():
-    assert "Prolific 2026" in METHODOLOGY_NOTE
+    assert "Prolific" in METHODOLOGY_NOTE
+    assert "Gordon" in METHODOLOGY_NOTE
     assert "83%" in METHODOLOGY_NOTE

@@ -94,7 +94,7 @@ def _check_batch(parsed: list, expected: int) -> list:
 
 def _build_dist_prompt(choice_questions: list[dict],
                        persona_texts: list[str]) -> str:
-    """Prolific 2026 방식: 강제 단일 응답이 아닌 보기별 선택 확률분포를 추출."""
+    """Prolific 연구팀(Gordon et al., 2026) 방식: 강제 단일 응답이 아닌 보기별 선택 확률분포를 추출."""
     profiles = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(persona_texts))
     lines = [get_question_type(q["type"]).dist_prompt_fragment(q)
              for q in choice_questions]
@@ -194,12 +194,13 @@ class LearnedDistributionStrategy(GenerationStrategy):
 
 
 # ----------------------------------------------------------------------------
-# 2) 분포추출 — Prolific 2026 방식 (LLM 확률분포 추출 후 샘플링)
+# 2) 분포추출 — Prolific 연구팀(Gordon et al., 2026) 방식 (LLM 확률분포 추출 후 샘플링)
 # ----------------------------------------------------------------------------
 class DistributionElicitationStrategy(GenerationStrategy):
     name = "elicitation"
     label = "분포추출"
-    description = ("Prolific 2026 방식: LLM이 페르소나별 보기별 선택 확률분포를 "
+    description = ("Prolific 연구팀(Gordon et al., 2026 pre-print) 방식: "
+                   "LLM이 페르소나별 보기별 선택 확률분포를 "
                    "추정하면 샘플링 (분포 오차 35~48% 감소 보고)")
 
     def supports(self, q: dict, ctx: GenerationContext) -> bool:

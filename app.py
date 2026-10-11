@@ -269,8 +269,9 @@ LLM은 방대한 인간 생성 텍스트로 학습되면서 인간의 응답 패
 
 **② 분포 기반 샘플링 (Prolific 2026)**
 
-본 도구는 Prolific 2026 연구 방식을 따릅니다. 페르소나에게 강제 단일 응답을 요구하는 대신,
-보기별 선택 **확률분포**를 LLM으로부터 추출한 뒤 샘플링합니다.
+본 도구는 Prolific 연구팀(Gordon et al., 2026 pre-print)의 방식을 따릅니다.
+페르소나에게 강제 단일 응답을 요구하는 대신, 보기별 선택 **확률분포**를
+LLM으로부터 추출한 뒤 샘플링합니다.
 이 방식은 단일 응답 방식 대비 분포 오차를 35~48% 감소시키는 것으로 보고되었습니다.
 
 **③ 고정밀 모드 (Stanford Generative Agents)**
@@ -358,7 +359,7 @@ LLM은 방대한 인간 생성 텍스트로 학습되면서 인간의 응답 패
     st.subheader("6. 참고 문헌")
     st.markdown(
         """
-- Prolific (2026). 분포 기반 합성응답 생성 방법론.
+- Gordon, A. et al. (Prolific, 2026). 합성응답자(synthetic respondents) 분포 추정 연구 (pre-print). 페르소나별 확률분포 추출 방식이 강제 단일 응답 대비 분포 오차 35~48% 감소. (Research Live, 2026-08-24 보도)
 - Park et al. Stanford Generative Agents 연구 (정규화 정확도 83%).
 - Pew Research Center. 합성응답자와 인간 실측 비교 (평균 12%p 오차).
 - Gemini Pro: 1,000개 설문 공개 벤치마크에서 표준 LLM 중 최고 성능 (67%).
@@ -704,7 +705,7 @@ def step4():
         st.write(
             "- 학습된 분포가 있는 선택형 문항: 경험분포에서 직접 샘플링 (API 호출 없음)"
             if has_learned
-            else "- 선택형 문항: Prolific 2026 방식 — LLM이 페르소나별 보기별 선택 확률분포를 추정하면 샘플링 (분포 오차 35~48% 감소 보고)"
+            else "- 선택형 문항: Prolific 연구팀(Gordon et al., 2026) 방식 — LLM이 페르소나별 보기별 선택 확률분포를 추정하면 샘플링 (분포 오차 35~48% 감소 보고)"
         )
         st.write("- 주관식 문항: LLM 배치 생성")
         n_trans = len(store.get("transcripts"))
