@@ -36,16 +36,18 @@ class AIProvider(ABC):
     fallback_model: str = ""
     cli_path: str = ""
     secret_name: str = ""
+    models: list = []
 
     def __init__(self, provider_id: str, label: str, default_model: str,
                  fallback_model: str = "", cli: str = "",
-                 secret_name: str = "") -> None:
+                 secret_name: str = "", models: list = None) -> None:
         self.provider_id = provider_id
         self.label = label
         self.default_model = default_model
         self.fallback_model = fallback_model
         self.cli_path = os.path.expanduser(cli)
         self.secret_name = secret_name
+        self.models = models or []
         self._custom_key = ""  # 사용자가 직접 입력한 API 키 (세션 한정)
 
     # -- 사용자 API 키 ------------------------------------------------------
@@ -247,6 +249,7 @@ def _build_default_registry() -> None:
             fallback_model=spec.get("fallback_model", ""),
             cli=spec.get("cli", ""),
             secret_name=spec.get("secret_name", ""),
+            models=spec.get("models", []),
         ))
 
 

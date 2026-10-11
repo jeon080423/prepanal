@@ -116,7 +116,11 @@ def current_model() -> str:
     override = (store.get("model_override") or "").strip()
     if override:
         return override
-    return get_provider(store.get("provider")).default_model
+    provider = store.get("provider")
+    selected = (store.get(f"model_select_{provider}") or "").strip()
+    if selected:
+        return selected
+    return get_provider(provider).default_model
 
 
 # ----------------------------------------------------------------------------
@@ -679,7 +683,7 @@ def step4():
         provider = st.radio(
             "사용할 AI",
             options=list(PROVIDER_REGISTRY.keys()),
-            format_func=lambda k: f"{get_provider(k).label} ({get_provider(k).default_model})",
+            format_func=lambda k: get_provider(k).label,
             horizontal=True,
             key="provider",
         )
@@ -688,15 +692,40 @@ def step4():
             st.success(msg)
         else:
             st.error(msg)
-        st.text_input(
-            "모델명 (비워두면 기본값)",
-            placeholder=get_provider(provider).default_model,
-            key="model_override",
+
+        # 모델 선택 (옵션)
+        prov = get_provider(provider)
+        model_options = prov.models or [
+            {"id": prov.default_model, "label": prov.default_model,
+             "description": "", "source": ""}
+        ]
+        model_ids = [m["id"] for m in model_options]
+        # 기본값 인덱스
+        try:
+            default_idx = model_ids.index(prov.default_model)
+        except ValueError:
+            default_idx = 0
+        selected_model_id = st.selectbox(
+            "모델 선택",
+            options=model_ids,
+            format_func=lambda mid: next(
+                (m["label"] for m in model_options if m["id"] == mid), mid),
+            index=default_idx,
+            key=f"model_select_{provider}",
         )
-        if provider == "gemini":
-            st.caption(
-                "Gemini 기본값은 Pro 계열입니다 (1,000개 설문 벤치마크에서 표준 LLM 중 최고 67%). "
-                "무료 등급에서 할당량 오류(429)가 나면 gemini-3.6-flash를 입력하세요."
+        # 선택된 모델의 설명·출처 표시
+        selected_info = next(
+            (m for m in model_options if m["id"] == selected_model_id), {})
+        if selected_info.get("description"):
+            st.info(f"📝 {selected_info['description']}")
+        if selected_info.get("source"):
+            st.caption(f"출처: {selected_info['source']}")
+        # 직접 입력 (목록에 없는 모델용)
+        with st.expander("모델 직접 입력", expanded=False):
+            st.text_input(
+                "모델 ID 직접 입력 (비워두면 위 선택 사용)",
+                placeholder=prov.default_model,
+                key="model_override",
             )
 
     with st.container(border=True):

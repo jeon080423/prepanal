@@ -39,12 +39,38 @@ PROVIDER_SPECS = {
     "gemini": {
         "kind": "gemini",
         "label": "Gemini",
-        # Prolific/벤치마크 리서치 기준 기본값: Pro 계열 (표준 LLM 중 최고 67%)
-        # 무료 등급에서 할당량 오류(429)가 나면 gemini-3.6-flash로 변경
         "default_model": "gemini-2.5-flash-lite",
-        "fallback_model": "gemini-2.0-flash",
+        "fallback_model": "gemini-2.5-flash",
         "cli": "~/workspace/skills/gemini/bin/gemini",
         "secret_name": "GEMINI_API_KEY",
+        # 모델 목록 (2026-10 검증, 출처: Google AI 공식 문서
+        # https://ai.google.dev/gemini-api/docs/models)
+        "models": [
+            {
+                "id": "gemini-2.5-flash-lite",
+                "label": "Gemini 2.5 Flash-Lite (기본값)",
+                "description": "2.5 패밀리 중 가장 빠르고 저렴. 대량 생성·파일럿 테스트에 적합. 무료 등급 지원.",
+                "source": "Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)",
+            },
+            {
+                "id": "gemini-2.5-flash",
+                "label": "Gemini 2.5 Flash",
+                "description": "속도와 성능의 균형. 추론이 필요한 작업에 적합한 가성비 모델.",
+                "source": "Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)",
+            },
+            {
+                "id": "gemini-2.5-pro",
+                "label": "Gemini 2.5 Pro",
+                "description": "2.5 패밀리 최고 성능. 복잡한 추론·코딩에 강함. 무료 등급 할당량이 적어 429가 날 수 있음.",
+                "source": "Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)",
+            },
+            {
+                "id": "gemini-3-flash-preview",
+                "label": "Gemini 3 Flash (Preview)",
+                "description": "차세대 Flash 모델. 무료 티어 제공. Preview 버전이라 스펙이 변경될 수 있음.",
+                "source": "Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)",
+            },
+        ],
     },
     "openai": {
         "kind": "openai",
@@ -53,6 +79,34 @@ PROVIDER_SPECS = {
         "fallback_model": "",
         "cli": "~/workspace/skills/openai/bin/chatgpt",
         "secret_name": "OPENAI_API_KEY",
+        # 모델 목록 (2026-10 검증, 출처: OpenAI 공식 문서
+        # https://platform.openai.com/docs/models)
+        "models": [
+            {
+                "id": "gpt-4o-mini",
+                "label": "GPT-4o mini (기본값)",
+                "description": "가장 저렴한 범용 모델. 대부분의 작업에 충분. 비용 민감한 대량 생성에 적합.",
+                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
+            },
+            {
+                "id": "gpt-4o",
+                "label": "GPT-4o",
+                "description": "범용 고성능 모델. 비전·코딩 포함 복잡한 작업에 적합.",
+                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
+            },
+            {
+                "id": "gpt-4.1-mini",
+                "label": "GPT-4.1 mini",
+                "description": "1M 컨텍스트. 성능과 비용의 균형.",
+                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
+            },
+            {
+                "id": "gpt-4.1",
+                "label": "GPT-4.1",
+                "description": "1M 컨텍스트. 복잡한 추론·코딩·지시 이행에 강함.",
+                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
+            },
+        ],
     },
 }
 
