@@ -165,6 +165,40 @@ st.markdown(
         background-color: #111111 !important;
         border: 1px solid #333333 !important;
     }
+    [data-testid="stSidebar"] details {
+        background-color: #111111 !important;
+    }
+    [data-testid="stSidebar"] details summary {
+        background-color: #111111 !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] details summary:hover {
+        background-color: #1A1A1A !important;
+    }
+    [data-testid="stSidebar"] details summary svg {
+        fill: #FFFFFF !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] input::placeholder {
+        color: #888888 !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stPassword"] button,
+    [data-testid="stSidebar"] button[kind="secondary"] {
+        background-color: #1A1A1A !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stSidebar"] label {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {
+        background-color: #1A1A1A !important;
+        color: #FFFFFF !important;
+        border-color: #444444 !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="select"] span {
+        color: #FFFFFF !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
