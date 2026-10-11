@@ -128,12 +128,53 @@ def _metrix_ci_b64() -> str:
     return ""
 
 
+# 사이드바 전체를 CI 배경(검정)과 동일하게 + 텍스트 가시성 확보
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        background-color: #000000;
+    }
+    [data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] .stCaption {
+        color: #CCCCCC !important;
+    }
+    [data-testid="stSidebar"] input {
+        background-color: #1A1A1A !important;
+        color: #FFFFFF !important;
+        border: 1px solid #444444 !important;
+    }
+    [data-testid="stSidebar"] button {
+        background-color: #1A1A1A !important;
+        color: #FFFFFF !important;
+        border: 1px solid #555555 !important;
+    }
+    [data-testid="stSidebar"] button:hover {
+        background-color: #333333 !important;
+        border-color: #FFD400 !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="radio"] div {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] hr {
+        border-color: #333333 !important;
+    }
+    [data-testid="stSidebar"] .stExpander {
+        background-color: #111111 !important;
+        border: 1px solid #333333 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 with st.sidebar:
-    # 메트릭스 CI (흰색 로고이므로 검은 배경에 표시)
+    # 메트릭스 CI (사이드바가 이미 검정이므로 로고만 표시)
     st.markdown(
         """
-        <div style="background-color: #000000; padding: 12px 16px;
-                    border-radius: 8px; margin-bottom: 12px; text-align: center;">
+        <div style="padding: 12px 16px 4px 16px; text-align: center;">
             <img src="data:image/png;base64,{logo_b64}"
                  style="height: 36px; vertical-align: middle;" alt="MetriX CI">
         </div>
