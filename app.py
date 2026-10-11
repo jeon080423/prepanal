@@ -914,16 +914,24 @@ def step4():
                     use_precision=store.get("use_precision"),
                 )
                 store.set("results_df", df)
+                prov = get_provider(provider)
+                used_model = prov.last_used_model or current_model()
+                auto_switched = used_model != current_model()
                 store.set("gen_meta", {
                     "생성일시": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "AI": get_provider(provider).label,
-                    "모델": current_model(),
+                    "AI": prov.label,
+                    "모델": used_model,
                     "응답자 수": int(n),
                     "분포 학습": "사용" if has_learned else "미사용",
                     "고정밀 모드": "사용" if store.get("use_precision") else "미사용",
                 })
                 progress.progress(1.0, text="완료")
                 st.success(f"{len(df)}건 생성 완료")
+                if auto_switched:
+                    st.warning(
+                        f"⚠️ {current_model()}의 할당량이 소진되어 "
+                        f"{used_model}(으)로 자동 전환되었습니다."
+                    )
             except Exception as e:
                 st.error(f"생성 실패: {e}")
 

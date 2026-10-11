@@ -49,6 +49,7 @@ class AIProvider(ABC):
         self.secret_name = secret_name
         self.models = models or []
         self._custom_key = ""  # 사용자가 직접 입력한 API 키 (세션 한정)
+        self.last_used_model = ""  # 마지막 생성에 실제 사용된 모델 (자동 전환 추적용)
 
     # -- 사용자 API 키 ------------------------------------------------------
     def set_custom_key(self, api_key: str) -> None:
@@ -115,10 +116,27 @@ class AIProvider(ABC):
             return ""
 
     # -- 생성 (서브클래스는 _call_rest만 오버라이드) ---------------------------
+    def _candidate_models(self, requested: str) -> list[str]:
+        """시도할 모델 목록: 요청 모델 먼저, 그 다음 models 목록 순서대로.
+
+        토큰 소진(429)이나 과부하(503) 시 자동으로 다음 모델로 넘어간다.
+        """
+        seen: list[str] = []
+        if requested:
+            seen.append(requested)
+        for m in self.models:
+            mid = m["id"] if isinstance(m, dict) else m
+            if mid not in seen:
+                seen.append(mid)
+        if self.fallback_model and self.fallback_model not in seen:
+            seen.append(self.fallback_model)
+        return seen
+
     def generate(self, prompt: str, model: str | None = None,
                  timeout: int = 180) -> str:
         model = model or self.default_model
         if self.cli_path and os.path.exists(self.cli_path):
+            self.last_used_model = model
             return self._call_cli(prompt, model, timeout)
         api_key = self._effective_key()
         if not api_key:
@@ -126,14 +144,24 @@ class AIProvider(ABC):
                 f"API 키가 없습니다. 사이드바에서 API 키를 직접 입력하거나, "
                 f"Streamlit Cloud의 secrets에 {self.secret_name}를 등록하세요."
             )
-        try:
-            return self._call_rest(api_key, prompt, model, timeout)
-        except RuntimeError as e:
-            # 429 (할당량 초과) 또는 503 (모델 과부하) 시 폴백 모델로 1회 재시도
-            err = str(e)
-            if ("429" in err or "503" in err) and self.fallback_model and model != self.fallback_model:
-                return self._call_rest(api_key, prompt, self.fallback_model, timeout)
-            raise
+        candidates = self._candidate_models(model)
+        last_err: Exception | None = None
+        for cand in candidates:
+            try:
+                result = self._call_rest(api_key, prompt, cand, timeout)
+                self.last_used_model = cand
+                return result
+            except RuntimeError as e:
+                err = str(e)
+                # 429(할당량 초과)/503(과부하)이 아니면 재시도 무의미 → 즉시 중단
+                if "429" not in err and "503" not in err:
+                    raise
+                last_err = e
+                continue
+        raise RuntimeError(
+            f"모든 모델의 할당량이 소진되었습니다 ({len(candidates)}개 모델 시도). "
+            f"잠시 후 다시 시도하세요. 마지막 오류: {last_err}"
+        )
 
     def _call_cli(self, prompt: str, model: str, timeout: int) -> str:
         proc = subprocess.run(
