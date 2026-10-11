@@ -196,42 +196,42 @@ st.markdown(
         color: #888888 !important;
         opacity: 1 !important;
     }
-    /* 사이드바 비밀번호 입력칸: 전체 흰색 (컨테이너·내부 div·input 모두) */
-    [data-testid="stSidebar"] [data-baseweb="input"],
-    [data-testid="stSidebar"] [data-baseweb="input"] > div,
-    [data-testid="stSidebar"] [data-baseweb="input"] div {
+    /* 사이드바 비밀번호 입력칸: 전체 흰색 (React Aria 구조 기준) */
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"],
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] > div,
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] div {
         background-color: #FFFFFF !important;
         background: #FFFFFF !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] input {
+    [data-testid="stSidebar"] [data-testid="stTextInputField"] {
         background-color: #FFFFFF !important;
         background: #FFFFFF !important;
         color: #000000 !important;
         border: none !important;
         box-shadow: none !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] input::placeholder {
+    [data-testid="stSidebar"] [data-testid="stTextInputField"]::placeholder {
         color: #999999 !important;
         opacity: 1 !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] input:focus {
+    [data-testid="stSidebar"] [data-testid="stTextInputField"]:focus {
         outline: none !important;
         box-shadow: none !important;
     }
     /* 눈 아이콘 버튼: 흰 배경 + 검정 테두리 + 검정 아이콘 */
-    [data-testid="stSidebar"] [data-baseweb="input"] button {
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] button {
         background-color: #FFFFFF !important;
         background: #FFFFFF !important;
         border: 1px solid #000000 !important;
         border-radius: 4px !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] button:hover {
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] button:hover {
         background-color: #F0F0F0 !important;
         background: #F0F0F0 !important;
     }
-    [data-testid="stSidebar"] [data-baseweb="input"] button svg,
-    [data-testid="stSidebar"] [data-baseweb="input"] button span,
-    [data-testid="stSidebar"] [data-baseweb="input"] button div {
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] button svg,
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] button span,
+    [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] button div {
         fill: #000000 !important;
         color: #000000 !important;
         background-color: transparent !important;
