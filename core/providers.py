@@ -178,9 +178,10 @@ class AIProvider(ABC):
                     return result
                 except RuntimeError as e:
                     err = str(e).lower()
-                    # 429(할당량 초과)/503(과부하)/타임아웃이면 다음으로 전환
-                    if ("429" not in err and "503" not in err
-                            and "timed out" not in err and "timeout" not in err):
+                    # 429(할당량 초과)/503(과부하)/404(모델 미지원)/타임아웃이면 다음으로 전환
+                    if ("429" not in err and "503" not in err and "404" not in err
+                            and "timed out" not in err and "timeout" not in err
+                            and "no longer available" not in err):
                         raise
                     last_err = e
                     continue
@@ -297,8 +298,9 @@ def generate(provider_id: str, prompt: str, model: str | None = None,
     except RuntimeError as e:
         err = str(e).lower()
         # 전환 대상 오류가 아니면 그대로 전파
-        if ("429" not in err and "503" not in err
-                and "timed out" not in err and "timeout" not in err):
+        if ("429" not in err and "503" not in err and "404" not in err
+                and "timed out" not in err and "timeout" not in err
+                and "no longer available" not in err):
             raise
         # 다른 provider로 폴백
         for other_id in PROVIDER_REGISTRY:

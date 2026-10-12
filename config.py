@@ -59,9 +59,9 @@ PROVIDER_SPECS = {
                 "source": "Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)",
             },
             {
-                "id": "gemini-2.5-pro",
-                "label": "Gemini 2.5 Pro",
-                "description": "2.5 패밀리 최고 성능. 복잡한 추론·코딩에 강함. 무료 등급 할당량이 적어 429가 날 수 있음.",
+                "id": "gemini-3.1-pro-preview",
+                "label": "Gemini 3.1 Pro (Preview)",
+                "description": "차세대 Pro 모델. 복잡한 추론·코딩에 강함. Preview 버전이라 스펙이 변경될 수 있음.",
                 "source": "Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)",
             },
             {
