@@ -100,6 +100,10 @@ def verify_access_code(code: str) -> tuple[bool, str]:
 
 def goto(step: int):
     store.set("step", step)
+    # 사이드바 radio 위젯 상태도 함께 동기화 (위젯 state가 우선되어 되돌아가는 버그 방지)
+    st.session_state["sidebar_step"] = step
+    st.rerun()
+
 # ----------------------------------------------------------------------------
 # 이론적 배경 (팝업 다이얼로그)
 # ----------------------------------------------------------------------------
@@ -229,11 +233,6 @@ LLM으로부터 추출한 뒤 샘플링합니다.
 - Gemini Pro: 1,000개 설문 공개 벤치마크에서 표준 LLM 중 최고 성능 (67%).
 """
     )
-
-
-    # 사이드바 radio 위젯 상태도 함께 동기화 (위젯 state가 우선되어 되돌아가는 버그 방지)
-    st.session_state["sidebar_step"] = step
-    st.rerun()
 
 
 def current_model() -> str:
