@@ -289,13 +289,23 @@ with st.sidebar:
 
     st.divider()
 
-    # 프로젝트 관리 (Google Sheets 우선, 미설정 시 로컬 파일)
+    # 프로젝트 관리 (Google Sheets 우선, 실패 시 로컬 파일로 폴백)
+    _storage_label = "💻 로컬 (리부트 시 삭제됨)"
+    _project_store = ProjectStore()
     if SheetsProjectStore.is_configured():
-        _project_store = SheetsProjectStore()
-        _storage_label = "☁️ Google Sheets"
-    else:
-        _project_store = ProjectStore()
-        _storage_label = "💻 로컬 (리부트 시 삭제됨)"
+        try:
+            _sheets_store = SheetsProjectStore()
+            # 실제 연결 테스트 (권한 문제 등을 조기에 감지)
+            _sheets_store.list_projects()
+            _project_store = _sheets_store
+            _storage_label = "☁️ Google Sheets"
+        except Exception as e:
+            # Sheets 연결 실패 시 로컬로 폴백하고 경고 표시
+            import streamlit as st
+            st.warning(
+                f"⚠️ Google Sheets 연결 실패로 로컬 저장소를 사용합니다. "
+                f"({str(e)[:100]})"
+            )
 
     def _save_current_project():
         pid = store.get("project_id")
