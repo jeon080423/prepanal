@@ -152,14 +152,15 @@ class AIProvider(ABC):
                 self.last_used_model = cand
                 return result
             except RuntimeError as e:
-                err = str(e)
-                # 429(할당량 초과)/503(과부하)이 아니면 재시도 무의미 → 즉시 중단
-                if "429" not in err and "503" not in err:
+                err = str(e).lower()
+                # 429(할당량 초과)/503(과부하)/타임아웃이면 다음 모델로 전환
+                if ("429" not in err and "503" not in err
+                        and "timed out" not in err and "timeout" not in err):
                     raise
                 last_err = e
                 continue
         raise RuntimeError(
-            f"모든 모델의 할당량이 소진되었습니다 ({len(candidates)}개 모델 시도). "
+            f"모든 모델 시도 실패 ({len(candidates)}개 모델). "
             f"잠시 후 다시 시도하세요. 마지막 오류: {last_err}"
         )
 
