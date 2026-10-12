@@ -88,32 +88,52 @@ class AIProvider(ABC):
             return False, f"❌ 오류: {str(e)[:200]}"
 
     # -- 인증 ---------------------------------------------------------------
-    def _effective_key(self) -> str:
-        """사용자 입력 키 > st.secrets 순서로 반환."""
+    def _effective_keys(self) -> list[str]:
+        """사용 가능한 API 키 목록. 사용자 입력 키 > st.secrets 순서.
+
+        st.secrets의 값은 단일 문자열 또는 리스트 모두 지원한다.
+        """
         if self._custom_key:
-            return self._custom_key
-        return self._read_secret(self.secret_name)
+            return [self._custom_key]
+        return self._read_secret_keys(self.secret_name)
+
+    def _effective_key(self) -> str:
+        """하위 호환: 첫 번째 키 반환."""
+        keys = self._effective_keys()
+        return keys[0] if keys else ""
 
     def is_available(self) -> bool:
-        return bool(self.cli_path and os.path.exists(self.cli_path)) or bool(self._effective_key())
+        return bool(self.cli_path and os.path.exists(self.cli_path)) or bool(self._effective_keys())
 
     def auth_status(self) -> tuple[bool, str]:
         if self.cli_path and os.path.exists(self.cli_path):
             return True, "로컬 CLI 인증 사용 가능"
         if self._custom_key:
             return True, "사용자 입력 API 키 사용 중"
-        if self._read_secret(self.secret_name):
-            return True, f"st.secrets의 {self.secret_name} 사용"
+        keys = self._read_secret_keys(self.secret_name)
+        if keys:
+            return True, f"st.secrets의 {self.secret_name} 사용 ({len(keys)}개 키)"
         return False, f"인증 없음 — API 키를 직접 입력하거나 secrets에 {self.secret_name} 등록 필요"
 
     @staticmethod
-    def _read_secret(name: str) -> str:
-        """st.secrets에서 값을 읽는다. Streamlit 밖에서는 빈 문자열."""
+    def _read_secret_keys(name: str) -> list[str]:
+        """st.secrets에서 키 목록을 읽는다. 단일 문자열 또는 리스트 지원.
+        Streamlit 밖에서는 빈 리스트."""
         try:
             import streamlit as st
-            return str(st.secrets.get(name, "") or "")
+            val = st.secrets.get(name, "")
+            if isinstance(val, (list, tuple)):
+                return [str(v).strip() for v in val if str(v).strip()]
+            val = str(val or "").strip()
+            return [val] if val else []
         except Exception:
-            return ""
+            return []
+
+    @staticmethod
+    def _read_secret(name: str) -> str:
+        """하위 호환: 첫 번째 키 반환."""
+        keys = AIProvider._read_secret_keys(name)
+        return keys[0] if keys else ""
 
     # -- 생성 (서브클래스는 _call_rest만 오버라이드) ---------------------------
     def _candidate_models(self, requested: str) -> list[str]:
@@ -138,29 +158,33 @@ class AIProvider(ABC):
         if self.cli_path and os.path.exists(self.cli_path):
             self.last_used_model = model
             return self._call_cli(prompt, model, timeout)
-        api_key = self._effective_key()
-        if not api_key:
+        api_keys = self._effective_keys()
+        if not api_keys:
             raise RuntimeError(
                 f"API 키가 없습니다. 사이드바에서 API 키를 직접 입력하거나, "
                 f"Streamlit Cloud의 secrets에 {self.secret_name}를 등록하세요."
             )
         candidates = self._candidate_models(model)
         last_err: Exception | None = None
-        for cand in candidates:
-            try:
-                result = self._call_rest(api_key, prompt, cand, timeout)
-                self.last_used_model = cand
-                return result
-            except RuntimeError as e:
-                err = str(e).lower()
-                # 429(할당량 초과)/503(과부하)/타임아웃이면 다음 모델로 전환
-                if ("429" not in err and "503" not in err
-                        and "timed out" not in err and "timeout" not in err):
-                    raise
-                last_err = e
-                continue
+        # 키 로테이션: 429가 나면 다음 키로 전환
+        for key_idx, api_key in enumerate(api_keys):
+            for cand in candidates:
+                try:
+                    result = self._call_rest(api_key, prompt, cand, timeout)
+                    self.last_used_model = cand
+                    if len(api_keys) > 1:
+                        self.last_used_model += f" (키 {key_idx + 1}/{len(api_keys)})"
+                    return result
+                except RuntimeError as e:
+                    err = str(e).lower()
+                    # 429(할당량 초과)/503(과부하)/타임아웃이면 다음으로 전환
+                    if ("429" not in err and "503" not in err
+                            and "timed out" not in err and "timeout" not in err):
+                        raise
+                    last_err = e
+                    continue
         raise RuntimeError(
-            f"모든 모델 시도 실패 ({len(candidates)}개 모델). "
+            f"모든 API 키({len(api_keys)}개)와 모델 시도 실패. "
             f"잠시 후 다시 시도하세요. 마지막 오류: {last_err}"
         )
 
