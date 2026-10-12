@@ -72,42 +72,6 @@ PROVIDER_SPECS = {
             },
         ],
     },
-    "openai": {
-        "kind": "openai",
-        "label": "OpenAI (ChatGPT)",
-        "default_model": "gpt-4o-mini",
-        "fallback_model": "",
-        "cli": "~/workspace/skills/openai/bin/chatgpt",
-        "secret_name": "OPENAI_API_KEY",
-        # 모델 목록 (2026-10 검증, 출처: OpenAI 공식 문서
-        # https://platform.openai.com/docs/models)
-        "models": [
-            {
-                "id": "gpt-4o-mini",
-                "label": "GPT-4o mini (기본값)",
-                "description": "가장 저렴한 범용 모델. 대부분의 작업에 충분. 비용 민감한 대량 생성에 적합.",
-                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
-            },
-            {
-                "id": "gpt-4o",
-                "label": "GPT-4o",
-                "description": "범용 고성능 모델. 비전·코딩 포함 복잡한 작업에 적합.",
-                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
-            },
-            {
-                "id": "gpt-4.1-mini",
-                "label": "GPT-4.1 mini",
-                "description": "1M 컨텍스트. 성능과 비용의 균형.",
-                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
-            },
-            {
-                "id": "gpt-4.1",
-                "label": "GPT-4.1",
-                "description": "1M 컨텍스트. 복잡한 추론·코딩·지시 이행에 강함.",
-                "source": "OpenAI 공식 문서 (platform.openai.com/docs/models)",
-            },
-        ],
-    },
 }
 
 # ----------------------------------------------------------------------------
