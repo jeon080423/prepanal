@@ -484,8 +484,14 @@ with st.sidebar:
         projects = _project_store.list_projects()
         current_pid = new_pid
 
+    # 처음 접속 시(세션에 project_id 없음) 빈 새 프로젝트로 시작
+    if current_pid is None:
+        new_pid = _project_store.create_project(f"새 프로젝트")
+        store.set("project_id", new_pid)
+        projects = _project_store.list_projects()
+        current_pid = new_pid
     # 현재 프로젝트가 목록에 없으면 첫 번째로 설정
-    if current_pid not in [p["id"] for p in projects]:
+    elif current_pid not in [p["id"] for p in projects]:
         current_pid = projects[0]["id"]
         _load_project_to_store(current_pid)
 
