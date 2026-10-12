@@ -288,8 +288,38 @@ _build_default_registry()
 # -- 하위 호환 진입점 (호출부는 레지스트리로 위임, 이름 분기 없음) -------------
 def generate(provider_id: str, prompt: str, model: str | None = None,
              timeout: int = 180) -> str:
-    """선택된 AI provider로 텍스트 생성. API 키 하드코딩 없음."""
-    return get_provider(provider_id).generate(prompt, model, timeout)
+    """선택된 AI provider로 텍스트 생성. API 키 하드코딩 없음.
+
+    요청한 provider가 할당량 초과(429)/과부하(503)/타임아웃으로 실패하면
+    자동으로 다른 provider로 전환한다. 인증 오류(API 키 없음 등)는 전환하지 않는다.
+    """
+    provider = get_provider(provider_id)
+    try:
+        return provider.generate(prompt, model, timeout)
+    except RuntimeError as e:
+        err = str(e).lower()
+        # 전환 대상 오류가 아니면 그대로 전파
+        if ("429" not in err and "503" not in err
+                and "timed out" not in err and "timeout" not in err):
+            raise
+        # 다른 provider로 폴백
+        for other_id in PROVIDER_REGISTRY:
+            if other_id == provider_id:
+                continue
+            try:
+                other = get_provider(other_id)
+                result = other.generate(prompt, None, timeout)
+                # 실제 사용된 provider 추적
+                provider.last_used_model = (
+                    f"{other.label} ({other.last_used_model}) [자동 전환]"
+                )
+                return result
+            except RuntimeError:
+                continue
+        raise RuntimeError(
+            f"모든 AI provider 시도 실패. 잠시 후 다시 시도하세요. "
+            f"마지막 오류: {e}"
+        )
 
 
 def auth_status(provider_id: str) -> tuple[bool, str]:
