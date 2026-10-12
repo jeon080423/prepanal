@@ -208,9 +208,24 @@ class DistributionElicitationStrategy(GenerationStrategy):
 
     def generate(self, ctx, questions, personas, rng) -> list[dict]:
         ptexts = self.persona_texts(ctx, personas, rng)
-        raw = cached_generate(ctx, _build_dist_prompt(questions, ptexts))
-        parsed = parse_json_array(raw)
-        parsed = _check_batch(parsed, len(personas))
+        # LLM이 요청 개수보다 적게 반환하면 최대 3회까지 재시도
+        last_err = None
+        for attempt in range(3):
+            # 재시도 시 캐시를 우회하여 새로 생성
+            if attempt > 0:
+                key = _cache_key(ctx.provider_id, ctx.model,
+                                 _build_dist_prompt(questions, ptexts))
+                ctx.cache.pop(key, None)
+            raw = cached_generate(ctx, _build_dist_prompt(questions, ptexts))
+            parsed = parse_json_array(raw)
+            try:
+                parsed = _check_batch(parsed, len(personas))
+                break
+            except ValueError as e:
+                last_err = e
+                continue
+        else:
+            raise last_err
         out = []
         for i in range(len(personas)):
             ans = {}
@@ -256,9 +271,23 @@ class OpenEndedGenerationStrategy(GenerationStrategy):
 
     def generate(self, ctx, questions, personas, rng) -> list[dict]:
         ptexts = self.persona_texts(ctx, personas, rng)
-        raw = cached_generate(ctx, _build_open_prompt(questions, ptexts))
-        parsed = parse_json_array(raw)
-        parsed = _check_batch(parsed, len(personas))
+        # LLM이 요청 개수보다 적게 반환하면 최대 3회까지 재시도
+        last_err = None
+        for attempt in range(3):
+            if attempt > 0:
+                key = _cache_key(ctx.provider_id, ctx.model,
+                                 _build_open_prompt(questions, ptexts))
+                ctx.cache.pop(key, None)
+            raw = cached_generate(ctx, _build_open_prompt(questions, ptexts))
+            parsed = parse_json_array(raw)
+            try:
+                parsed = _check_batch(parsed, len(personas))
+                break
+            except ValueError as e:
+                last_err = e
+                continue
+        else:
+            raise last_err
         out = []
         for i in range(len(personas)):
             ans = {}
