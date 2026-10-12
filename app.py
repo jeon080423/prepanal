@@ -68,7 +68,6 @@ def init_state():
     store.set_default("provider", "gemini")
     store.set_default("model_override", "")
     store.set_default("gen_cache", {})
-    store.set_default("show_theory", False)
     store.set_default("project_id", None)
 
 
@@ -515,22 +514,17 @@ with st.sidebar:
 
     st.divider()
     if st.button("📖 이론적 배경", use_container_width=True):
-        store.set("show_theory", True)
-        st.rerun()
+        theory_dialog()
 
 
 step = store.get("step")
 
 
 # ----------------------------------------------------------------------------
-# 이론적 배경
+# 이론적 배경 (팝업 다이얼로그)
 # ----------------------------------------------------------------------------
-def theory_page():
-    if st.button("← 돌아가기"):
-        store.set("show_theory", False)
-        st.rerun()
-
-    st.header("📖 이론적 배경")
+@st.dialog("📖 이론적 배경", width="large")
+def theory_dialog():
     st.caption("합성응답자(Synthetic Respondents) 방법론의 이론적 기초")
 
     st.subheader("1. 합성응답자란?")
@@ -1206,9 +1200,6 @@ def step5():
 # ----------------------------------------------------------------------------
 # 라우팅
 # ----------------------------------------------------------------------------
-if store.get("show_theory"):
-    theory_page()
-else:
-    {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
-        f"step{step}"
-    ]()
+{"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
+    f"step{step}"
+]()

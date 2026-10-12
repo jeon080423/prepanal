@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import urllib.error
 import urllib.request
@@ -229,6 +230,8 @@ class GeminiProvider(AIProvider):
         except urllib.error.HTTPError as e:
             raise RuntimeError(
                 f"Gemini API 오류 (HTTP {e.code}): {e.read().decode('utf-8')[:300]}")
+        except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
+            raise RuntimeError(f"The read operation timed out: {e}")
         try:
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError):
