@@ -140,16 +140,26 @@ AHPMASTER와 동일한 서비스 계정을 사용합니다.
 
     def list_projects(self) -> list[dict]:
         ws = self._ensure()
-        records = ws.get_all_records()
+        # get_all_records()는 헤더 중복 시 예외를 던지므로 get_all_values()로 직접 파싱
+        values = ws.get_all_values()
+        if not values:
+            return []
+        header = values[0]
+        # 헤더가 올바르지 않으면 고침
+        if header != HEADER:
+            ws.update("A1", [HEADER])
+            header = HEADER
+        idx = {name: i for i, name in enumerate(header)}
         projects = []
-        for r in records:
-            if not r.get("id"):
+        for row in values[1:]:
+            pid = row[idx["id"]] if "id" in idx and idx["id"] < len(row) else ""
+            if not pid:
                 continue
             projects.append({
-                "id": r["id"],
-                "name": r.get("name", r["id"]),
-                "created_at": r.get("created_at", ""),
-                "updated_at": r.get("updated_at", ""),
+                "id": pid,
+                "name": row[idx["name"]] if "name" in idx and idx["name"] < len(row) else pid,
+                "created_at": row[idx["created_at"]] if "created_at" in idx and idx["created_at"] < len(row) else "",
+                "updated_at": row[idx["updated_at"]] if "updated_at" in idx and idx["updated_at"] < len(row) else "",
             })
         projects.sort(key=lambda p: p["updated_at"], reverse=True)
         return projects
