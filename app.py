@@ -381,29 +381,29 @@ st.markdown(
         color: #FFFFFF !important;
     }
     /* 프로젝트 선택칸: 흰 배경 + 검정 텍스트/아이콘 */
-    [data-testid="stSidebar"] .st-key-project_selector [data-baseweb="select"] > div,
-    [data-testid="stSidebar"] .st-key-project_selector [role="combobox"] {
+    .st-key-project_selector [data-baseweb="select"] > div,
+    .st-key-project_selector [role="combobox"] {
         background-color: #FFFFFF !important;
         color: #000000 !important;
         border-color: #D1D1D6 !important;
     }
-    [data-testid="stSidebar"] .st-key-project_selector [data-baseweb="select"] *,
-    [data-testid="stSidebar"] .st-key-project_selector [role="combobox"] * {
+    .st-key-project_selector [data-baseweb="select"] *,
+    .st-key-project_selector [role="combobox"] * {
         color: #000000 !important;
     }
-    [data-testid="stSidebar"] .st-key-project_selector input {
+    .st-key-project_selector input {
         background-color: #FFFFFF !important;
         border: none !important;
     }
-    [data-testid="stSidebar"] .st-key-project_selector button {
+    .st-key-project_selector button {
         background-color: #FFFFFF !important;
         border-left: 1px solid #D1D1D6 !important;
         color: #000000 !important;
     }
-    [data-testid="stSidebar"] .st-key-project_selector button:hover {
+    .st-key-project_selector button:hover {
         background-color: #F0F0F0 !important;
     }
-    [data-testid="stSidebar"] .st-key-project_selector svg {
+    .st-key-project_selector svg {
         color: #000000 !important;
         fill: #000000 !important;
     }
@@ -500,101 +500,16 @@ with st.sidebar:
         # 결과 관련 캐시 초기화
         store.set("gen_cache", {})
 
-    with st.container(border=True):
-        # 기존 프로젝트를 재사용해 새 접속마다 빈 프로젝트가 늘지 않게 한다.
-        projects = _project_store.list_projects()
-        current_pid = store.get("project_id")
-        project_ids = [p["id"] for p in projects]
-        if projects and current_pid not in project_ids:
-            current_pid = projects[0]["id"]
-            _load_project_to_store(current_pid)
-        elif not projects:
-            current_pid = None
-            store.set("project_id", None)
-
-        st.subheader("📁 프로젝트")
-        st.caption(f"저장소: {_storage_label}")
-        if not SheetsProjectStore.is_configured():
-            with st.expander("Google Sheets 연동 설정", expanded=False):
-                st.markdown(SheetsProjectStore.setup_guide())
-
-        if projects:
-            proj_options = [p["id"] for p in projects]
-            proj_names = {p["id"]: p["name"] for p in projects}
-            selected_pid = st.selectbox(
-                "프로젝트 선택",
-                options=proj_options,
-                format_func=lambda pid: proj_names.get(pid, pid),
-                index=proj_options.index(current_pid),
-                key="project_selector",
-                label_visibility="collapsed",
-            )
-            if selected_pid != current_pid:
-                _save_current_project()
-                _load_project_to_store(selected_pid)
-                st.rerun()
-
-            with st.expander("➕ 새 프로젝트 추가", expanded=False):
-                with st.form("new_project_form"):
-                    new_project_name = st.text_input("프로젝트 이름")
-                    create_submitted = st.form_submit_button(
-                        "프로젝트 만들기", use_container_width=True
-                    )
-                if create_submitted:
-                    try:
-                        new_pid = _project_store.create_project(new_project_name)
-                    except ValueError as e:
-                        st.error(str(e))
-                    else:
-                        _save_current_project()
-                        _load_project_to_store(new_pid)
-                        st.rerun()
-
-            if st.button("💾 저장", use_container_width=True, key="btn_save_project"):
-                _save_current_project()
-                st.success("저장되었습니다.")
-
-            # 이름 변경·삭제
-            with st.expander("프로젝트 관리", expanded=False):
-                cur_meta = _project_store.get_meta(selected_pid)
-                new_name = st.text_input(
-                    "프로젝트 이름",
-                    value=cur_meta.get("name", ""),
-                    key="project_rename_input",
-                )
-                if st.button("이름 변경", key="btn_rename_project"):
-                    try:
-                        _project_store.rename_project(selected_pid, new_name)
-                    except ValueError as e:
-                        st.error(str(e))
-                    else:
-                        st.rerun()
-                st.divider()
-                if st.button("🗑️ 프로젝트 삭제", key="btn_delete_project", type="secondary"):
-                    if len(projects) <= 1:
-                        st.error("마지막 프로젝트는 삭제할 수 없습니다.")
-                    else:
-                        _project_store.delete_project(selected_pid)
-                        remaining = [p for p in projects if p["id"] != selected_pid]
-                        _load_project_to_store(remaining[0]["id"])
-                        st.rerun()
-        else:
-            st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
-            with st.form("first_project_form"):
-                first_project_name = st.text_input("프로젝트 이름")
-                first_create_submitted = st.form_submit_button(
-                    "첫 프로젝트 만들기", use_container_width=True
-                )
-            if first_create_submitted:
-                try:
-                    first_pid = _project_store.create_project(first_project_name)
-                except ValueError as e:
-                    st.error(str(e))
-                else:
-                    _load_project_to_store(first_pid)
-                    st.rerun()
-            st.stop()
-
+    # 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
+    projects = _project_store.list_projects()
+    current_pid = store.get("project_id")
+    project_ids = [p["id"] for p in projects]
+    if projects and current_pid not in project_ids:
+        current_pid = projects[0]["id"]
+        _load_project_to_store(current_pid)
+    elif not projects:
+        current_pid = None
+        store.set("project_id", None)
     st.divider()
 
     step_labels = [f"{i + 1}. {name}" for i, name in enumerate(STEPS)]
@@ -1234,8 +1149,99 @@ def step5():
 
 
 # ----------------------------------------------------------------------------
+def _render_project_panel():
+    with st.container(border=True):
+        st.subheader("📁 프로젝트")
+        st.caption(f"저장소: {_storage_label}")
+        if not SheetsProjectStore.is_configured():
+            with st.expander("Google Sheets 연동 설정", expanded=False):
+                st.markdown(SheetsProjectStore.setup_guide())
+
+        if projects:
+            proj_options = [p["id"] for p in projects]
+            proj_names = {p["id"]: p["name"] for p in projects}
+            selected_pid = st.selectbox(
+                "프로젝트 선택",
+                options=proj_options,
+                format_func=lambda pid: proj_names.get(pid, pid),
+                index=proj_options.index(current_pid),
+                key="project_selector",
+                label_visibility="collapsed",
+            )
+            if selected_pid != current_pid:
+                _save_current_project()
+                _load_project_to_store(selected_pid)
+                st.rerun()
+
+            with st.expander("➕ 새 프로젝트 추가", expanded=False):
+                with st.form("new_project_form"):
+                    new_project_name = st.text_input("프로젝트 이름")
+                    create_submitted = st.form_submit_button(
+                        "프로젝트 만들기", use_container_width=True
+                    )
+                if create_submitted:
+                    try:
+                        new_pid = _project_store.create_project(new_project_name)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        _save_current_project()
+                        _load_project_to_store(new_pid)
+                        st.rerun()
+
+            if st.button("💾 저장", use_container_width=True, key="btn_save_project"):
+                _save_current_project()
+                st.success("저장되었습니다.")
+
+            # 이름 변경·삭제
+            with st.expander("프로젝트 관리", expanded=False):
+                cur_meta = _project_store.get_meta(selected_pid)
+                new_name = st.text_input(
+                    "프로젝트 이름",
+                    value=cur_meta.get("name", ""),
+                    key="project_rename_input",
+                )
+                if st.button("이름 변경", key="btn_rename_project"):
+                    try:
+                        _project_store.rename_project(selected_pid, new_name)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        st.rerun()
+                st.divider()
+                if st.button("🗑️ 프로젝트 삭제", key="btn_delete_project", type="secondary"):
+                    if len(projects) <= 1:
+                        st.error("마지막 프로젝트는 삭제할 수 없습니다.")
+                    else:
+                        _project_store.delete_project(selected_pid)
+                        remaining = [p for p in projects if p["id"] != selected_pid]
+                        _load_project_to_store(remaining[0]["id"])
+                        st.rerun()
+        else:
+            st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
+            with st.form("first_project_form"):
+                first_project_name = st.text_input("프로젝트 이름")
+                first_create_submitted = st.form_submit_button(
+                    "첫 프로젝트 만들기", use_container_width=True
+                )
+            if first_create_submitted:
+                try:
+                    first_pid = _project_store.create_project(first_project_name)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    _load_project_to_store(first_pid)
+                    st.rerun()
+            st.stop()
+
+
+
 # 라우팅
 # ----------------------------------------------------------------------------
-{"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
-    f"step{step}"
-]()
+main_col, project_col = st.columns([3, 1], gap="large")
+with project_col:
+    _render_project_panel()
+with main_col:
+    {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
+        f"step{step}"
+    ]()
