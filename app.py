@@ -427,6 +427,18 @@ st.markdown(
         color: #000000 !important;
         fill: #000000 !important;
     }
+    /* 카드 내부 접이식 메뉴는 별도 카드 테두리 없이 표시 */
+    .st-key-ai_settings_card [data-testid="stExpander"] details,
+    .st-key-project_management_card [data-testid="stExpander"] details {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .st-key-ai_settings_card [data-testid="stExpander"] details summary,
+    .st-key-project_management_card [data-testid="stExpander"] details summary {
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -721,7 +733,7 @@ def step1():
         key="add_qtype",
     )
     with st.container(border=True):
-        with st.form("add_question"):
+        with st.form("add_question", border=False):
             qtext = st.text_input("문항 내용")
             qopts = ""
             if get_question_type(qtype_name).needs_options:
@@ -924,7 +936,7 @@ def step4():
 
 
 
-    with st.container(border=True):
+    with st.container(border=True, key="ai_settings_card"):
         st.subheader("AI 선택")
         provider = st.radio(
             "사용할 AI",
@@ -1165,7 +1177,7 @@ def step5():
 
 # ----------------------------------------------------------------------------
 def _render_project_panel():
-    with st.container(border=True):
+    with st.container(border=True, key="project_management_card"):
         st.markdown("#### 📁 프로젝트 관리")
         if not SheetsProjectStore.is_configured():
             with st.expander("Google Sheets 연동 설정", expanded=False):
@@ -1188,7 +1200,7 @@ def _render_project_panel():
                 st.rerun()
 
             with st.expander("➕ 새 프로젝트 추가", expanded=False):
-                with st.form("new_project_form"):
+                with st.form("new_project_form", border=False):
                     new_project_name = st.text_input("프로젝트 이름")
                     create_submitted = st.form_submit_button(
                         "프로젝트 만들기", use_container_width=True
@@ -1233,7 +1245,7 @@ def _render_project_panel():
                         st.rerun()
         else:
             st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
-            with st.form("first_project_form"):
+            with st.form("first_project_form", border=False):
                 first_project_name = st.text_input("프로젝트 이름")
                 first_create_submitted = st.form_submit_button(
                     "첫 프로젝트 만들기", use_container_width=True
