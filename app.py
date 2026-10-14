@@ -627,8 +627,8 @@ step = store.get("step")
 # Step 1: 설문 설계
 # ----------------------------------------------------------------------------
 def step1():
-    st.header("1. 설문 설계")
-    st.caption("가상 응답을 생성할 설문 문항을 입력하세요.")
+
+
 
     questions = store.get("questions")
 
@@ -761,8 +761,8 @@ def step1():
 # Step 2: 페르소나 설계
 # ----------------------------------------------------------------------------
 def step2():
-    st.header("2. 페르소나 설계")
-    st.caption("가상 응답자의 인구통계 분포를 설정합니다. 항목별 비율의 합은 100%여야 합니다.")
+
+
 
     dims = store.get("persona_dims")
     valid = True
@@ -853,8 +853,8 @@ def step2():
 # Step 3: 분포 학습
 # ----------------------------------------------------------------------------
 def step3():
-    st.header("3. 분포 학습 (선택)")
-    st.caption("실제 응답 엑셀을 올리면 문항별 응답 분포를 학습합니다. 건너뛰면 페르소나 기반 생성만 합니다.")
+
+
 
     with st.expander("방법론 안내", expanded=True):
         st.markdown(METHODOLOGY_NOTE.replace("\n", "  \n"))
@@ -921,8 +921,8 @@ def step3():
 # Step 4: 가상 응답 생성
 # ----------------------------------------------------------------------------
 def step4():
-    st.header("4. 가상 응답 생성")
-    st.caption("AI로 가상 응답자를 생성합니다.")
+
+
 
     with st.container(border=True):
         st.subheader("AI 선택")
@@ -1059,7 +1059,7 @@ def step4():
 # Step 5: 결과
 # ----------------------------------------------------------------------------
 def step5():
-    st.header("5. 결과")
+
 
     # 정직한 한계 고지 — 결과 탭 상단 고정 표시
     st.warning(DISCLAIMER)
@@ -1252,6 +1252,21 @@ def _render_project_panel():
 
 # 라우팅
 # ----------------------------------------------------------------------------
+# 제목 행과 카드 행을 분리해 본문과 프로젝트 카드의 윗선을 맞춘다.
+page_titles = {
+    1: ("1. 설문 설계", "가상 응답을 생성할 설문 문항을 입력하세요."),
+    2: ("2. 페르소나 설계", "가상 응답자의 인구통계 분포를 설정합니다. 항목별 비율의 합은 100%여야 합니다."),
+    3: ("3. 분포 학습 (선택)", "실제 응답 엑셀을 올리면 문항별 응답 분포를 학습합니다. 건너뛰면 페르소나 기반 생성만 합니다."),
+    4: ("4. 가상 응답 생성", "AI로 가상 응답자를 생성합니다."),
+    5: ("5. 결과", ""),
+}
+header_col, _ = st.columns([2, 1], gap="large")
+with header_col:
+    page_title, page_caption = page_titles[step]
+    st.header(page_title)
+    if page_caption:
+        st.caption(page_caption)
+
 main_col, project_col = st.columns([2, 1], gap="large")
 with project_col:
     _render_project_panel()
