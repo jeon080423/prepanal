@@ -1238,7 +1238,7 @@ def _render_project_panel():
 
 # 라우팅
 # ----------------------------------------------------------------------------
-main_col, project_col = st.columns([3, 1], gap="large")
+main_col, project_col = st.columns([2, 1], gap="large")
 with project_col:
     _render_project_panel()
 with main_col:
