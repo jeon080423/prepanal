@@ -453,9 +453,19 @@ st.markdown(
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_"] button::before {
         content: "▼";
-        font-size: 10px;
+        font-size: 16px;
         line-height: 1;
         flex-shrink: 0;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_"] button > div {
+        flex: 0 1 auto !important;
+        width: auto !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        margin: 0 !important;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_"] button p {
+        text-align: left !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_complete_"] button::before {
         color: #4ADE80 !important;
