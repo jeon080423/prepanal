@@ -1208,7 +1208,7 @@ def _render_project_panel():
                 st.success("저장되었습니다.")
 
             # 이름 변경·삭제
-            with st.expander("프로젝트 관리", expanded=False):
+            with st.expander("이름 변경 및 삭제", expanded=False):
                 cur_meta = _project_store.get_meta(selected_pid)
                 new_name = st.text_input(
                     "프로젝트 이름",
