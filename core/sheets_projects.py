@@ -174,10 +174,19 @@ AHPMASTER와 동일한 서비스 계정을 사용합니다.
         return None
 
     def create_project(self, name: str) -> str:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("프로젝트 이름을 입력해 주세요.")
+        if any(
+            p["name"].strip().casefold() == clean_name.casefold()
+            for p in self.list_projects()
+        ):
+            raise ValueError("같은 이름의 프로젝트가 있습니다. 다른 이름으로 입력해 주세요.")
+
         ws = self._ensure()
         project_id = uuid.uuid4().hex[:12]
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        ws.append_row([project_id, name.strip() or "새 프로젝트", now, now])
+        ws.append_row([project_id, clean_name, now, now])
         return project_id
 
     def save_project(self, project_id: str, state: dict) -> None:
@@ -242,11 +251,20 @@ AHPMASTER와 동일한 서비스 계정을 사용합니다.
         }
 
     def rename_project(self, project_id: str, new_name: str) -> None:
+        clean_name = new_name.strip()
+        if not clean_name:
+            raise ValueError("프로젝트 이름을 입력해 주세요.")
+        if any(
+            p["id"] != project_id and p["name"].strip().casefold() == clean_name.casefold()
+            for p in self.list_projects()
+        ):
+            raise ValueError("같은 이름의 프로젝트가 있습니다. 다른 이름으로 입력해 주세요.")
+
         ws = self._ensure()
         row_num = self._find_row(project_id)
         if row_num is None:
             return
-        ws.update_cell(row_num, 2, new_name.strip())
+        ws.update_cell(row_num, 2, clean_name)
         ws.update_cell(row_num, 4, datetime.now().strftime("%Y-%m-%d %H:%M"))
 
     def delete_project(self, project_id: str) -> None:

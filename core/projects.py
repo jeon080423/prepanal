@@ -82,11 +82,20 @@ class ProjectStore:
 
     def create_project(self, name: str) -> str:
         """새 프로젝트 생성. 프로젝트 ID 반환."""
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("프로젝트 이름을 입력해 주세요.")
+        if any(
+            p["name"].strip().casefold() == clean_name.casefold()
+            for p in self.list_projects()
+        ):
+            raise ValueError("같은 이름의 프로젝트가 있습니다. 다른 이름으로 입력해 주세요.")
+
         project_id = uuid.uuid4().hex[:12]
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         data = {
             "_meta": {
-                "name": name.strip() or "새 프로젝트",
+                "name": clean_name,
                 "created_at": now,
                 "updated_at": now,
             },
@@ -145,8 +154,16 @@ class ProjectStore:
         path = self._path(project_id)
         if not path.exists():
             return
+        clean_name = new_name.strip()
+        if not clean_name:
+            raise ValueError("프로젝트 이름을 입력해 주세요.")
+        if any(
+            p["id"] != project_id and p["name"].strip().casefold() == clean_name.casefold()
+            for p in self.list_projects()
+        ):
+            raise ValueError("같은 이름의 프로젝트가 있습니다. 다른 이름으로 입력해 주세요.")
         data = json.loads(path.read_text(encoding="utf-8"))
-        data["_meta"]["name"] = new_name.strip() or data["_meta"].get("name", "")
+        data["_meta"]["name"] = clean_name
         data["_meta"]["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
