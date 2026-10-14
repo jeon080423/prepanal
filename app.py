@@ -395,7 +395,14 @@ st.markdown(
         background-color: #FFFFFF !important;
         border: none !important;
     }
-    [data-testid="stSidebar"] .st-key-project_selector svg {
+    [data-testid="stSidebar"] .st-key-project_selector button {
+        background-color: #FFFFFF !important;
+        border-left: 1px solid #D1D1D6 !important;
+        color: #000000 !important;
+    }
+    [data-testid="stSidebar"] .st-key-project_selector button:hover {
+        background-color: #F0F0F0 !important;
+    }    [data-testid="stSidebar"] .st-key-project_selector svg {
         color: #000000 !important;
         fill: #000000 !important;
     }
