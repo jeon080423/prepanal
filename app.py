@@ -498,7 +498,11 @@ with st.sidebar:
         """.format(logo_b64=_metrix_ci_b64()),
         unsafe_allow_html=True,
     )
-    st.title(APP_TITLE)
+    st.markdown(
+        f'<div style="color: #FFFFFF; font-size: 19px; font-weight: 700; '
+        f'white-space: nowrap; margin-bottom: 0.75rem;">{APP_TITLE}</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         '<p style="color: #FFFFFF !important; font-size: 0.875rem; margin-top: -0.5rem;">'
         'Synthetic Respondent Pre-Test</p>',
