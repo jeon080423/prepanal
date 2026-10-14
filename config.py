@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).parent
 SAMPLE_Q_PATH = BASE_DIR / "samples" / "sample_questionnaire.json"
 SAMPLE_XLSX_PATH = BASE_DIR / "samples" / "sample_real_data.xlsx"
 
-APP_TITLE = "프리서베이 스튜디오"
+APP_TITLE = "AI 합성응답자 기반 사전테스트"
 APP_SUBTITLE = "AI 합성응답자 기반 사전테스트 · Synthetic Respondent Pre-Test"
 
 # ----------------------------------------------------------------------------

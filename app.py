@@ -14,7 +14,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from config import (APP_SUBTITLE, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
+from config import (APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
                     METHODOLOGY_NOTE, SAMPLE_XLSX_PATH)
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
@@ -499,7 +499,6 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.title(APP_TITLE)
-    st.caption(APP_SUBTITLE)
 
     # 액세스 코드 입력 (사이드바)
     if is_code_verified():
