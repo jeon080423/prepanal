@@ -380,6 +380,25 @@ st.markdown(
     [data-testid="stSidebar"] [data-baseweb="select"] span {
         color: #FFFFFF !important;
     }
+    /* 프로젝트 선택칸: 흰 배경 + 검정 텍스트/아이콘 */
+    [data-testid="stSidebar"] .st-key-project_selector [data-baseweb="select"] > div,
+    [data-testid="stSidebar"] .st-key-project_selector [role="combobox"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border-color: #D1D1D6 !important;
+    }
+    [data-testid="stSidebar"] .st-key-project_selector [data-baseweb="select"] *,
+    [data-testid="stSidebar"] .st-key-project_selector [role="combobox"] * {
+        color: #000000 !important;
+    }
+    [data-testid="stSidebar"] .st-key-project_selector input {
+        background-color: #FFFFFF !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] .st-key-project_selector svg {
+        color: #000000 !important;
+        fill: #000000 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
