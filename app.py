@@ -1166,8 +1166,7 @@ def step5():
 # ----------------------------------------------------------------------------
 def _render_project_panel():
     with st.container(border=True):
-        st.subheader("📁 프로젝트")
-        st.caption(f"저장소: {_storage_label}")
+        st.markdown("#### 📁 프로젝트 관리")
         if not SheetsProjectStore.is_configured():
             with st.expander("Google Sheets 연동 설정", expanded=False):
                 st.markdown(SheetsProjectStore.setup_guide())
