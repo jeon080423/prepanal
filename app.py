@@ -443,8 +443,6 @@ with st.sidebar:
                 else:
                     st.error(msg)
 
-    st.divider()
-
     # 프로젝트 관리 (Google Sheets 우선, 실패 시 로컬 파일로 폴백)
     _storage_label = "💻 로컬 (리부트 시 삭제됨)"
     _project_store = ProjectStore()
