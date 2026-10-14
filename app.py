@@ -499,6 +499,11 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.title(APP_TITLE)
+    st.markdown(
+        '<p style="color: #FFFFFF !important; font-size: 0.875rem; margin-top: -0.5rem;">'
+        'Synthetic Respondent Pre-Test</p>',
+        unsafe_allow_html=True,
+    )
 
     # 액세스 코드 입력 (사이드바)
     if is_code_verified():
