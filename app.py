@@ -482,6 +482,16 @@ st.markdown(
     [data-testid="stSidebar"] [class*="st-key-step_nav_"] button:hover {
         background: rgba(255, 255, 255, 0.08) !important;
     }
+    /* 결과 요약: 긴 날짜와 모델 이름도 생략 없이 표시 */
+    .st-key-results_summary [data-testid="stMetricValue"],
+    .st-key-results_summary [data-testid="stMetricValue"] > div {
+        font-size: 18px !important;
+        line-height: 1.5 !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        overflow-wrap: anywhere;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1137,7 +1147,7 @@ def step5():
         return
 
     meta = store.get("gen_meta") or {}
-    with st.container(border=True):
+    with st.container(border=True, key="results_summary"):
         cols = st.columns(len(meta) or 1)
         for i, (k, v) in enumerate(meta.items()):
             cols[i].metric(k, v)
