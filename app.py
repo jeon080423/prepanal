@@ -483,12 +483,11 @@ st.markdown(
         background: rgba(255, 255, 255, 0.08) !important;
     }
     /* 결과 요약: 긴 날짜와 모델 이름도 생략 없이 표시 */
-    .st-key-results_summary [data-testid="stMetricValue"],
-    .st-key-results_summary [data-testid="stMetricValue"] > div {
+    .st-key-results_summary [data-testid="stMarkdownContainer"] p {
         font-size: 18px !important;
         line-height: 1.5 !important;
         white-space: normal !important;
-        overflow: visible !important;
+        overflow: hidden !important;
         text-overflow: clip !important;
         overflow-wrap: anywhere;
     }
@@ -701,17 +700,30 @@ step = store.get("step")
 # ----------------------------------------------------------------------------
 # Step 1: 설문 설계
 # ----------------------------------------------------------------------------
+def _replace_questionnaire(questions):
+    store.set("questions", questions)
+    st.session_state["questionnaire_revision"] = st.session_state.get("questionnaire_revision", 0) + 1
+    for state_key in ("learned", "learned_file", "results_df", "gen_meta"):
+        store.set(state_key, None)
+
 def step1():
 
 
 
     questions = store.get("questions")
+    sample_texts = {q["text"] for q in q_service.load_sample_questions()}
+    custom_questions = [q for q in questions if q["text"] not in sample_texts]
+    if custom_questions and len(custom_questions) < len(questions):
+        _replace_questionnaire(custom_questions)
+        _save_current_project()
+        st.rerun()
+    question_namespace = f"{store.get('project_id')}_{st.session_state.get('questionnaire_revision', 0)}"
 
     if not questions:
         with st.container(border=True):
             st.write("아직 문항이 없습니다. 샘플 설문으로 시작하거나 직접 추가하세요.")
             if st.button("샘플 설문 불러오기", type="primary"):
-                store.set("questions", q_service.load_sample_questions())
+                _replace_questionnaire(q_service.load_sample_questions())
                 st.rerun()
 
     # 설문지 파일 자동 인식 (PDF/HWPX/DOC/DOCX)
@@ -738,7 +750,7 @@ def step1():
                                 for pq in parsed:
                                     pq["id"] = q_service.new_question_id(new_questions)
                                     new_questions.append(pq)
-                                store.set("questions", new_questions)
+                                _replace_questionnaire(new_questions)
                                 n_branch = sum(1 for q in parsed if q.get("branching"))
                                 st.success(f"{len(parsed)}개 문항을 인식했습니다. 기존 문항은 제거되었습니다. (분기 로직 {n_branch}건 포함)")
                                 st.rerun()
@@ -747,7 +759,7 @@ def step1():
 
     for idx, q in enumerate(questions):
         with st.expander(q_service.question_summary(q), expanded=False):
-            new_text = st.text_input("문항 내용", value=q["text"], key=f"qtext_{q['id']}")
+            new_text = st.text_input("문항 내용", value=q["text"], key=f"qtext_{question_namespace}_{q['id']}")
             if new_text != q["text"]:
                 q["text"] = new_text
                 store.set("questions", questions)
@@ -756,7 +768,7 @@ def step1():
                 opts_raw = st.text_area(
                     "보기 (한 줄에 하나씩)",
                     value="\n".join(q.get("options", [])),
-                    key=f"qopts_{q['id']}",
+                    key=f"qopts_{question_namespace}_{q['id']}",
                 )
                 q["options"] = [o.strip() for o in opts_raw.split("\n") if o.strip()]
                 store.set("questions", questions)
@@ -764,7 +776,7 @@ def step1():
             branching = st.text_input(
                 "분기 로직 (예: 문3에서 ① 응답 시 문5로 이동)",
                 value=q.get("branching", ""),
-                key=f"qbranch_{q['id']}",
+                key=f"qbranch_{question_namespace}_{q['id']}",
             )
             if branching != q.get("branching", ""):
                 q["branching"] = branching
@@ -817,8 +829,11 @@ def step1():
                 for e in errs:
                     st.error(e)
             else:
+                if questions and all(q["text"] in sample_texts for q in questions):
+                    questions = []
+                    qdict["id"] = q_service.new_question_id(questions)
                 questions.append(qdict)
-                store.set("questions", questions)
+                _replace_questionnaire(questions)
                 st.rerun()
 
     st.divider()
@@ -1148,12 +1163,16 @@ def step5():
 
     meta = store.get("gen_meta") or {}
     with st.container(border=True, key="results_summary"):
-        cols = st.columns(len(meta) or 1)
+        cols = st.columns([3 if k == "모델" else 2 if k == "생성일시" else 1 for k in meta] or [1])
         for i, (k, v) in enumerate(meta.items()):
-            cols[i].metric(k, v)
+            with cols[i]:
+                st.caption(k)
+                st.write(str(v))
 
     st.subheader("데이터 미리보기")
-    st.dataframe(df, use_container_width=True, height=400)
+    preview_df = df.copy()
+    preview_df.index = pd.RangeIndex(start=1, stop=len(preview_df) + 1)
+    st.dataframe(preview_df, use_container_width=True, height=400)
 
     # 파일럿 진단 리포트 (규칙 기반 — 실제 데이터 통계만 사용, 환각 없음)
     from core.diagnostics import diagnose
