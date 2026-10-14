@@ -453,7 +453,7 @@ st.markdown(
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_"] button::before {
         content: "▼";
-        font-size: 16px;
+        font-size: 22px;
         line-height: 1;
         flex-shrink: 0;
     }
@@ -491,7 +491,7 @@ with st.sidebar:
     # 메트릭스 CI (사이드바가 이미 검정이므로 로고만 표시)
     st.markdown(
         """
-        <div style="padding: 12px 16px 4px 16px; text-align: center;">
+        <div style="padding: 12px 16px 28px 16px; text-align: center;">
             <img src="data:image/png;base64,{logo_b64}"
                  style="height: 36px; vertical-align: middle;" alt="MetriX CI">
         </div>
