@@ -402,7 +402,8 @@ st.markdown(
     }
     [data-testid="stSidebar"] .st-key-project_selector button:hover {
         background-color: #F0F0F0 !important;
-    }    [data-testid="stSidebar"] .st-key-project_selector svg {
+    }
+    [data-testid="stSidebar"] .st-key-project_selector svg {
         color: #000000 !important;
         fill: #000000 !important;
     }
