@@ -100,8 +100,6 @@ def verify_access_code(code: str) -> tuple[bool, str]:
 
 def goto(step: int):
     store.set("step", step)
-    # 사이드바 radio 위젯 상태도 함께 동기화 (위젯 state가 우선되어 되돌아가는 버그 방지)
-    st.session_state["sidebar_step"] = step
     st.rerun()
 
 # ----------------------------------------------------------------------------
@@ -439,6 +437,38 @@ st.markdown(
         padding-left: 0.25rem;
         padding-right: 0.25rem;
     }
+    /* 단계 진행 메뉴: 완료(초록), 현재(파랑), 예정(회색) 삼각형 */
+    [data-testid="stSidebar"] [class*="st-key-step_nav_"] button {
+        background: transparent !important;
+        border: none !important;
+        border-radius: 6px !important;
+        justify-content: flex-start !important;
+        min-height: 32px;
+        padding: 4px 8px !important;
+        gap: 10px;
+        box-shadow: none !important;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_"] button::before {
+        content: "▼";
+        font-size: 10px;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_complete_"] button::before {
+        color: #4ADE80 !important;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_current_"] button::before {
+        color: #60A5FA !important;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_upcoming_"] button::before {
+        color: #6B7280 !important;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_current_"] button {
+        background: rgba(96, 165, 250, 0.15) !important;
+    }
+    [data-testid="stSidebar"] [class*="st-key-step_nav_"] button:hover {
+        background: rgba(255, 255, 255, 0.08) !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -542,18 +572,20 @@ with st.sidebar:
         store.set("project_id", None)
     st.divider()
 
-    step_labels = [f"{i + 1}. {name}" for i, name in enumerate(STEPS)]
-    selected = st.radio(
-        "단계",
-        options=list(range(1, 6)),
-        format_func=lambda i: step_labels[i - 1],
-        index=store.get("step") - 1,
-        label_visibility="collapsed",
-        key="sidebar_step",
-    )
-    if selected != store.get("step"):
-        store.set("step", selected)
-        st.rerun()
+    current_step = store.get("step")
+    for step_number, step_name in enumerate(STEPS, start=1):
+        status = (
+            "complete" if step_number < current_step
+            else "current" if step_number == current_step
+            else "upcoming"
+        )
+        if st.button(
+            f"{step_number}. {step_name}",
+            key=f"step_nav_{status}_{step_number}",
+            use_container_width=True,
+            help="현재 단계" if status == "current" else f"{step_name} 단계로 이동",
+        ):
+            goto(step_number)
 
     st.divider()
     st.subheader("AI 설정")
