@@ -42,7 +42,10 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container { max-width: 1080px; padding-top: 2rem; }
+    [data-testid="stMain"] .block-container {
+        max-width: none;
+        padding: 2rem clamp(1rem, 2.5vw, 3rem);
+    }
     div[data-testid="stExpander"] { background: #ffffff; border-radius: 8px; }
     h1, h2, h3 { letter-spacing: -0.02em; }
     </style>
@@ -1304,14 +1307,14 @@ page_titles = {
     4: ("4. 가상 응답 생성", "AI로 가상 응답자를 생성합니다."),
     5: ("5. 결과", ""),
 }
-header_col, _ = st.columns([2, 1], gap="large")
+header_col, _ = st.columns([3, 1], gap="large")
 with header_col:
     page_title, page_caption = page_titles[step]
     st.header(page_title)
     if page_caption:
         st.caption(page_caption)
 
-main_col, project_col = st.columns([2, 1], gap="large")
+main_col, project_col = st.columns([3, 1], gap="large")
 with project_col:
     _render_project_panel()
 with main_col:
