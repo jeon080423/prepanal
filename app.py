@@ -747,17 +747,14 @@ def step1():
                 st.rerun()
 
     st.divider()
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        st.button(
-            "다음: 페르소나 설계 →",
-            type="primary",
-            disabled=not questions,
-            on_click=lambda: goto(2),
-        )
+    st.button(
+        "다음: 페르소나 설계 →",
+        type="primary",
+        disabled=not questions,
+        on_click=lambda: goto(2),
+    )
     if not questions:
-        with col2:
-            st.caption("문항을 1개 이상 추가해야 다음 단계로 이동할 수 있습니다.")
+        st.caption("문항을 1개 이상 추가해야 다음 단계로 이동할 수 있습니다.")
 
 
 # ----------------------------------------------------------------------------
