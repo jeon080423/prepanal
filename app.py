@@ -380,6 +380,26 @@ st.markdown(
     [data-testid="stSidebar"] [data-baseweb="select"] span {
         color: #FFFFFF !important;
     }
+    /* AI 제공자 선택칸과 화살표: 흰 배경 + 검정 표시 */
+    [data-testid="stSidebar"] .st-key-provider_select [data-baseweb="select"] > div,
+    [data-testid="stSidebar"] .st-key-provider_select [role="combobox"],
+    [data-testid="stSidebar"] .st-key-provider_select [role="combobox"] > div,
+    [data-testid="stSidebar"] .st-key-provider_select button,
+    [data-testid="stSidebar"] .st-key-provider_select button:hover,
+    [data-testid="stSidebar"] .st-key-provider_select input {
+        background: #FFFFFF !important;
+        color: #000000 !important;
+        border-color: #D1D1D6 !important;
+    }
+    [data-testid="stSidebar"] .st-key-provider_select [data-baseweb="select"] *,
+    [data-testid="stSidebar"] .st-key-provider_select [role="combobox"] *,
+    [data-testid="stSidebar"] .st-key-provider_select button * {
+        color: #000000 !important;
+    }
+    [data-testid="stSidebar"] .st-key-provider_select svg {
+        color: #000000 !important;
+        fill: #000000 !important;
+    }
     /* 프로젝트 선택칸: 흰 배경 + 검정 텍스트/아이콘 */
     .st-key-project_selector [data-baseweb="select"] > div,
     .st-key-project_selector [role="combobox"] {
