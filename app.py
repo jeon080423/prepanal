@@ -97,6 +97,8 @@ def verify_access_code(code: str) -> tuple[bool, str]:
         return False, "서버에 액세스 코드가 설정되지 않았습니다."
     if code == expected:
         st.session_state["access_granted"] = True
+        # 코드 입력 직후에는 기존 작업이 아닌 빈 상태로 시작
+        st.session_state["_fresh_after_verify"] = True
         return True, "코드가 확인되었습니다."
     return False, "코드가 올바르지 않습니다."
 
@@ -591,10 +593,31 @@ with st.sidebar:
         store.set("gen_cache", {})
 
     # 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
+    # 단, 액세스 코드 입력 전/직후에는 기존 작업을 불러오지 않고 기본 페이지로 시작
     projects = _project_store.list_projects()
     current_pid = store.get("project_id")
     project_ids = [p["id"] for p in projects]
-    if projects and current_pid not in project_ids:
+    if st.session_state.pop("_fresh_after_verify", False):
+        # 코드 입력 직후: 빈 새 프로젝트를 생성해 기본 페이지로 시작
+        new_pid = _project_store.create_project("새 프로젝트")
+        store.set("project_id", new_pid)
+        store.set("questions", [])
+        store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+        store.set("transcripts", [])
+        store.set("use_precision", False)
+        store.set("learned", None)
+        store.set("learned_file", None)
+        store.set("results_df", None)
+        store.set("gen_meta", None)
+        store.set("gen_cache", {})
+        store.set("step", 1)
+        projects = _project_store.list_projects()
+        current_pid = new_pid
+    elif not is_code_verified():
+        # 코드 입력 전: 기존 작업을 불러오지 않음
+        current_pid = None
+        store.set("project_id", None)
+    elif projects and current_pid not in project_ids:
         current_pid = projects[0]["id"]
         _load_project_to_store(current_pid)
     elif not projects:
