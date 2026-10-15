@@ -1282,6 +1282,9 @@ def step5():
 
 # ----------------------------------------------------------------------------
 def _render_project_panel():
+    # 액세스 코드 입력 전에는 기존 프로젝트 목록을 숨김
+    if not is_code_verified():
+        return
     with st.container(border=True, key="project_management_card"):
         st.markdown("#### 📁 프로젝트 관리")
         if not SheetsProjectStore.is_configured():
@@ -1291,11 +1294,15 @@ def _render_project_panel():
         if projects:
             proj_options = [p["id"] for p in projects]
             proj_names = {p["id"]: p["name"] for p in projects}
+            try:
+                default_idx = proj_options.index(current_pid)
+            except ValueError:
+                default_idx = 0
             selected_pid = st.selectbox(
                 "프로젝트 선택",
                 options=proj_options,
                 format_func=lambda pid: proj_names.get(pid, pid),
-                index=proj_options.index(current_pid),
+                index=default_idx,
                 key="project_selector",
                 label_visibility="collapsed",
             )
