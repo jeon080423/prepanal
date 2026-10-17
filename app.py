@@ -599,7 +599,18 @@ with st.sidebar:
     project_ids = [p["id"] for p in projects]
     if st.session_state.pop("_fresh_after_verify", False):
         # 코드 입력 직후: 빈 새 프로젝트를 생성해 기본 페이지로 시작
-        new_pid = _project_store.create_project("새 프로젝트")
+        # 같은 이름이 이미 있으면 기존 것을 재사용 (중복 생성 방지)
+        try:
+            new_pid = _project_store.create_project("새 프로젝트")
+        except ValueError:
+            existing = [p for p in projects if p.get("name") == "새 프로젝트"]
+            new_pid = existing[0]["id"] if existing else project_ids[0] if project_ids else None
+            if new_pid is None:
+                # 프로젝트가 하나도 없으면 타임스탬프로 고유 이름 생성
+                from datetime import datetime
+                new_pid = _project_store.create_project(
+                    f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}"
+                )
         store.set("project_id", new_pid)
         store.set("questions", [])
         store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
