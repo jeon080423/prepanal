@@ -671,8 +671,7 @@ with st.sidebar:
 
     provider = get_provider(store.get("provider"))
 
-    # 사용자 API 키 직접 입력 (기본: 미사용)
-    use_custom = st.checkbox("🔑 내 API 키 사용", value=False, key=f"use_custom_{store.get('provider')}")
+    # 사용자 API 키 직접 입력
     st.markdown("""
     <style>
     div[data-testid="stTextInput"] input[type="password"] {
@@ -680,41 +679,34 @@ with st.sidebar:
     }
     </style>
     """, unsafe_allow_html=True)
-    user_key = ""
-    if use_custom:
-        user_key = st.text_input(
-            "API 키 직접 입력",
-            type="password",
-            placeholder=f"{provider.label} API 키를 입력하세요",
-            key=f"custom_key_{store.get('provider')}",
-            help="입력한 키는 브라우저 세션 메모리에만 보관되며, 서버에 저장되지 않습니다. 페이지를 새로고침하면 사라집니다.",
-        )
-        st.caption("⚠️ 입력한 API 키는 저장되지 않습니다. 브라우저를 닫거나 새로고침하면 다시 입력해야 합니다.")
+    user_key = st.text_input(
+        "API 키 직접 입력",
+        type="password",
+        placeholder=f"{provider.label} API 키를 입력하세요",
+        key=f"custom_key_{store.get('provider')}",
+        help="입력한 키는 브라우저 세션 메모리에만 보관되며, 서버에 저장되지 않습니다. 페이지를 새로고침하면 사라집니다.",
+    )
+    st.caption("⚠️ 입력한 API 키는 저장되지 않습니다. 브라우저를 닫거나 새로고침하면 다시 입력해야 합니다.")
 
-    # 체크 해제 시 커스텀 키 제거 (secrets 키로 복귀)
-    if not use_custom and provider.has_custom_key():
-        provider.clear_custom_key()
-
-    if use_custom:
-        col_test, col_clear = st.columns(2)
-        with col_test:
-            if st.button("키 테스트", use_container_width=True):
-                if not user_key.strip():
-                    st.warning("먼저 API 키를 입력하세요.")
-                else:
-                    with st.spinner("키 유효성 확인 중..."):
-                        ok_test, msg_test = provider.test_key(user_key)
-                    if ok_test:
-                        provider.set_custom_key(user_key)
-                        st.success(msg_test)
-                        st.rerun()
-                    else:
-                        st.error(msg_test)
-        with col_clear:
-            if provider.has_custom_key():
-                if st.button("키 지우기", use_container_width=True):
-                    provider.clear_custom_key()
+    col_test, col_clear = st.columns(2)
+    with col_test:
+        if st.button("키 테스트", use_container_width=True):
+            if not user_key.strip():
+                st.warning("먼저 API 키를 입력하세요.")
+            else:
+                with st.spinner("키 유효성 확인 중..."):
+                    ok_test, msg_test = provider.test_key(user_key)
+                if ok_test:
+                    provider.set_custom_key(user_key)
+                    st.success(msg_test)
                     st.rerun()
+                else:
+                    st.error(msg_test)
+    with col_clear:
+        if provider.has_custom_key():
+            if st.button("키 지우기", use_container_width=True):
+                provider.clear_custom_key()
+                st.rerun()
 
     ok, msg = auth_status(store.get("provider"))
     st.write(f"선택: **{provider.label}**")
