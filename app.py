@@ -671,8 +671,8 @@ with st.sidebar:
 
     provider = get_provider(store.get("provider"))
 
-    # 사용자 API 키 직접 입력
-    use_custom = st.checkbox("🔑 내 API 키 사용", key=f"use_custom_{store.get('provider')}")
+    # 사용자 API 키 직접 입력 (기본: 미사용)
+    use_custom = st.checkbox("🔑 내 API 키 사용", value=False, key=f"use_custom_{store.get('provider')}")
     st.markdown("""
     <style>
     div[data-testid="stTextInput"] input[type="password"] {
@@ -680,15 +680,15 @@ with st.sidebar:
     }
     </style>
     """, unsafe_allow_html=True)
-    user_key = st.text_input(
-        "API 키 직접 입력",
-        type="password",
-        placeholder=f"{provider.label} API 키를 입력하세요",
-        key=f"custom_key_{store.get('provider')}",
-        disabled=not use_custom,
-        help="입력한 키는 브라우저 세션 메모리에만 보관되며, 서버에 저장되지 않습니다. 페이지를 새로고침하면 사라집니다.",
-    )
+    user_key = ""
     if use_custom:
+        user_key = st.text_input(
+            "API 키 직접 입력",
+            type="password",
+            placeholder=f"{provider.label} API 키를 입력하세요",
+            key=f"custom_key_{store.get('provider')}",
+            help="입력한 키는 브라우저 세션 메모리에만 보관되며, 서버에 저장되지 않습니다. 페이지를 새로고침하면 사라집니다.",
+        )
         st.caption("⚠️ 입력한 API 키는 저장되지 않습니다. 브라우저를 닫거나 새로고침하면 다시 입력해야 합니다.")
 
     # 체크 해제 시 커스텀 키 제거 (secrets 키로 복귀)
