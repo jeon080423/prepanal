@@ -292,13 +292,13 @@ st.markdown(
     [data-testid="stSidebar"] [data-baseweb="radio"] div {
         color: #FFFFFF !important;
     }
-    /* 선택된 라디오 버튼 강조색: 차콜 */
+    /* 선택된 라디오 버튼 강조색: 밝은 파랑 */
     [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child {
-        border-color: #8E8E93 !important;
-        background-color: #48484A !important;
+        border-color: #0A84FF !important;
+        background-color: #0A84FF !important;
     }
     [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child > div {
-        background-color: #D1D1D6 !important;
+        background-color: #FFFFFF !important;
     }
     /* 포커스 강조색: 차콜 */
     [data-testid="stSidebar"] input:focus {
