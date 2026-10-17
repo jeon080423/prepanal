@@ -673,6 +673,13 @@ with st.sidebar:
 
     # 사용자 API 키 직접 입력
     st.caption("🔑 내 API 키 사용 (선택사항)")
+    st.markdown("""
+    <style>
+    div[data-testid="stTextInput"] input[type="password"] {
+        background-color: white !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     user_key = st.text_input(
         "API 키 직접 입력",
         type="password",
