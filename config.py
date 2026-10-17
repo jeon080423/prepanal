@@ -72,6 +72,27 @@ PROVIDER_SPECS = {
             },
         ],
     },
+    "groq": {
+        "kind": "groq",
+        "label": "Groq",
+        "default_model": "llama-3.3-70b-versatile",
+        "fallback_model": "llama-3.1-8b-instant",
+        "secret_name": "GROQ_API_KEY",
+        "models": [
+            {
+                "id": "llama-3.3-70b-versatile",
+                "label": "Llama 3.3 70B (기본값)",
+                "description": "고품질 오픈 모델. 무료 티어 제공. 한국어 지원.",
+                "source": "Groq 공식 문서 (console.groq.com/docs/models)",
+            },
+            {
+                "id": "llama-3.1-8b-instant",
+                "label": "Llama 3.1 8B Instant",
+                "description": "초고속 경량 모델. 대량 생성에 적합. 무료 티어 제공.",
+                "source": "Groq 공식 문서 (console.groq.com/docs/models)",
+            },
+        ],
+    },
 }
 
 # ----------------------------------------------------------------------------

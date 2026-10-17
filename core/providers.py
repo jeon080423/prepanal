@@ -240,6 +240,38 @@ class GeminiProvider(AIProvider):
                 f"Gemini 응답 파싱 실패: {json.dumps(data, ensure_ascii=False)[:300]}")
 
 
+class GroqProvider(AIProvider):
+    """Groq API (OpenAI 호환). 무료 티어 제공."""
+
+    def _call_rest(self, api_key: str, prompt: str, model: str,
+                   timeout: int = 180) -> str:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(
+                f"Groq API 오류 (HTTP {e.code}): {e.read().decode('utf-8')[:300]}")
+        except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
+            raise RuntimeError(f"The read operation timed out: {e}")
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError):
+            raise RuntimeError(
+                f"Groq 응답 파싱 실패: {json.dumps(data, ensure_ascii=False)[:300]}")
+
+
 # ----------------------------------------------------------------------------
 # 레지스트리
 # ----------------------------------------------------------------------------
@@ -248,6 +280,7 @@ PROVIDER_REGISTRY: dict[str, AIProvider] = {}
 # 새 provider 종류 등록은 여기 한 줄 (kind → 클래스)
 _PROVIDER_CLASSES: dict[str, type[AIProvider]] = {
     "gemini": GeminiProvider,
+    "groq": GroqProvider,
 }
 
 
