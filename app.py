@@ -678,6 +678,13 @@ with st.sidebar:
     div[data-testid="stTextInput"] input[type="password"] {
         background-color: white !important;
     }
+    /* 액세스 코드 입력값이 흰 배경에 묻히지 않도록 명시적으로 검정색 지정 */
+    input[type="password"][placeholder="액세스 코드"] {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        caret-color: #000000 !important;
+        opacity: 1 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
     user_key = ""
