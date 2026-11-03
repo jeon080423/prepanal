@@ -21,6 +21,10 @@ MULTI_SEP = ";"            # 다중선택 응답 구분자
 DEFAULT_BATCH_SIZE = 5     # LLM 배치 호출 단위 (응답자 수)
 MAX_RESPONDENTS = 200      # 1회 생성 상한
 TRANSCRIPT_EXCERPT_CHARS = 2500  # 고정밀 모드에서 쓰는 인터뷰 발췌 길이
+# 긴 설문 자동 인식은 입력 문서를 여러 구간으로 나눠 처리한다.
+# 겹치는 구간을 두어 문항·보기·분기 설명이 경계에서 잘리지 않도록 한다.
+QUESTIONNAIRE_PARSE_CHUNK_CHARS = 10000
+QUESTIONNAIRE_PARSE_OVERLAP_CHARS = 1200
 
 LIKERT_OPTIONS = ["전혀 그렇지 않다", "그렇지 않다", "보통이다", "그렇다", "매우 그렇다"]
 

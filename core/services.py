@@ -9,10 +9,14 @@ from __future__ import annotations
 import io
 import json
 import random
+import re
+import unicodedata
 
 import pandas as pd
 
-from config import (DEFAULT_BATCH_SIZE, METHODOLOGY_NOTE, SAMPLE_Q_PATH,
+from config import (DEFAULT_BATCH_SIZE, METHODOLOGY_NOTE,
+                    QUESTIONNAIRE_PARSE_CHUNK_CHARS,
+                    QUESTIONNAIRE_PARSE_OVERLAP_CHARS, SAMPLE_Q_PATH,
                     STRATEGY_ORDER)
 from .persona import sample_persona
 from .question_types import get_question_type
@@ -353,6 +357,9 @@ class PdfQuestionnaireService:
     분기문항(스킵 로직)도 인식하여 branching 필드에 저장합니다.
     """
 
+    # 마지막 자동 인식의 상태를 UI가 간단히 안내할 수 있도록 보관한다.
+    last_parse_stats: dict = {}
+
     @staticmethod
     def extract_text(pdf_bytes: bytes) -> str:
         """PDF에서 텍스트를 추출합니다."""
@@ -570,17 +577,57 @@ class PdfQuestionnaireService:
                          "(pdf, hwpx, doc, docx만 지원)")
 
     @staticmethod
-    def parse_questions(pdf_text: str, provider_id: str = "gemini") -> list[dict]:
-        """AI를 이용해 PDF 텍스트에서 설문 문항을 파싱합니다.
+    def _split_text(text: str, max_chars: int,
+                    overlap_chars: int) -> list[str]:
+        """긴 설문 텍스트를 줄 경계를 우선해 겹치는 구간으로 나눈다.
 
-        Returns:
-            [{"text": ..., "type": "single|multi|likert|open",
-              "options": [...], "branching": "..."}, ...]
-            branching은 분기 로직 설명 문자열 (없으면 "")
+        문항과 보기 목록이 경계에서 분리되는 것을 줄이기 위해 overlap을
+        둔다. 입력이 짧으면 원문을 그대로 한 구간으로 반환한다.
         """
-        from .providers import generate
+        normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        normalized = normalized.replace("\f", "\n").strip()
+        if not normalized:
+            return []
+        if max_chars <= 0:
+            raise ValueError("QUESTIONNAIRE_PARSE_CHUNK_CHARS는 1 이상이어야 합니다.")
+        if len(normalized) <= max_chars:
+            return [normalized]
 
-        prompt = f"""다음은 설문지 PDF에서 추출한 텍스트입니다. 설문 문항을 JSON 배열로 파싱하세요.
+        overlap = max(0, min(overlap_chars, max_chars - 1))
+        chunks: list[str] = []
+        start = 0
+        text_len = len(normalized)
+        while start < text_len:
+            target_end = min(start + max_chars, text_len)
+            end = target_end
+            if target_end < text_len:
+                # 절반 이후의 마지막 줄바꿈에서 끊어 문항 중간 절단을 줄인다.
+                boundary_start = start + max_chars // 2
+                boundary = normalized.rfind("\n", boundary_start, target_end)
+                if boundary > start:
+                    end = boundary
+            chunk = normalized[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= text_len:
+                break
+            next_start = max(end - overlap, start + 1)
+            if next_start <= start:
+                next_start = end
+            start = next_start
+        return chunks
+
+    @staticmethod
+    def _parse_prompt(text: str, chunk_index: int = 1,
+                      chunk_total: int = 1) -> str:
+        segment_note = ""
+        if chunk_total > 1:
+            segment_note = f"""
+
+이 텍스트는 전체 설문 중 {chunk_index}/{chunk_total}번째 구간입니다.
+구간 경계에서 잘린 문항은 추측해서 만들지 말고 제외하세요. 겹치는 다음 구간에
+완전한 문항이 다시 나타날 수 있습니다. 이 구간에서 완전히 확인되는 문항만 반환하세요."""
+        return f"""다음은 설문지에서 추출한 텍스트입니다. 설문 문항을 JSON 배열로 파싱하세요.
 
 규칙:
 1. 각 문항은 {{"text": "문항 내용", "type": "single|multi|likert|open", "options": ["보기1", "보기2", ...], "branching": "분기 설명 또는 빈 문자열"}} 형태입니다.
@@ -593,28 +640,21 @@ class PdfQuestionnaireService:
    분기가 없으면 빈 문자열("")을 넣으세요.
 4. 보기 번호(①②③, 1. 2. 3. 등)는 제거하고 보기 내용만 추출하세요.
 5. 설문 안내문, 표지, 인구통계 안내 등은 문항에서 제외하세요.
-6. JSON 배열만 출력하고 다른 설명은 붙이지 마세요.
+6. JSON 배열만 출력하고 다른 설명은 붙이지 마세요.{segment_note}
 
 --- 설문지 텍스트 ---
-{pdf_text[:12000]}
+{text}
 --- 끝 ---"""
 
-        result = generate(provider_id, prompt)
-        # JSON 추출 (코드블록 제거)
-        result = result.strip()
-        if result.startswith("```"):
-            lines = result.split("\n")
-            result = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        try:
-            questions = json.loads(result)
-        except json.JSONDecodeError:
-            # JSON 파싱 실패 시 빈 리스트
+    @staticmethod
+    def _clean_questions(questions) -> list[dict]:
+        """AI 결과를 앱이 사용하는 문항 구조로 정규화한다."""
+        if not isinstance(questions, list):
             return []
-        # 유효성 검증 및 정규화
         valid_types = {"single", "multi", "likert", "open"}
         cleaned = []
         for q in questions:
-            if not isinstance(q, dict) or not q.get("text", "").strip():
+            if not isinstance(q, dict) or not str(q.get("text", "")).strip():
                 continue
             qtype = q.get("type", "single")
             if qtype not in valid_types:
@@ -624,9 +664,94 @@ class PdfQuestionnaireService:
                 options = []
             options = [str(o).strip() for o in options if str(o).strip()]
             cleaned.append({
-                "text": q["text"].strip(),
+                "text": str(q["text"]).strip(),
                 "type": qtype,
                 "options": options,
                 "branching": str(q.get("branching", "")).strip(),
             })
         return cleaned
+
+    @staticmethod
+    def _question_key(question: dict) -> str:
+        """겹치는 구간에서 반복 인식된 같은 문항을 식별할 키."""
+        text = unicodedata.normalize("NFKC", str(question.get("text", "")))
+        text = re.sub(r"^\s*(?:문항\s*)?[0-9０-９]+\s*[.)、:：-]?\s*", "", text)
+        return re.sub(r"\s+", " ", text).strip().casefold()
+
+    @classmethod
+    def _parse_chunk(cls, chunk_text: str, provider_id: str,
+                     chunk_index: int, chunk_total: int) -> list[dict]:
+        from .providers import generate
+
+        result = generate(
+            provider_id,
+            cls._parse_prompt(chunk_text, chunk_index, chunk_total),
+        ).strip()
+        # JSON 코드블록을 허용하되, 최종 출력은 배열만 처리한다.
+        if result.startswith("```"):
+            lines = result.split("\n")
+            result = "\n".join(
+                lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+            )
+        try:
+            questions = json.loads(result)
+        except json.JSONDecodeError:
+            return []
+        return cls._clean_questions(questions)
+
+    @classmethod
+    def parse_questions(cls, pdf_text: str,
+                        provider_id: str = "gemini") -> list[dict]:
+        """AI를 이용해 설문 텍스트 전체에서 문항을 파싱합니다.
+
+        Returns:
+            [{"text": ..., "type": "single|multi|likert|open",
+              "options": [...], "branching": "..."}, ...]
+            branching은 분기 로직 설명 문자열 (없으면 "")
+        """
+        chunks = cls._split_text(
+            pdf_text,
+            QUESTIONNAIRE_PARSE_CHUNK_CHARS,
+            QUESTIONNAIRE_PARSE_OVERLAP_CHARS,
+        )
+        cls.last_parse_stats = {
+            "total_chunks": len(chunks),
+            "successful_chunks": 0,
+            "failed_chunks": 0,
+            "parsed_questions": 0,
+            "unique_questions": 0,
+            "duplicates_removed": 0,
+        }
+        if not chunks:
+            return []
+
+        parsed: list[dict] = []
+        last_error: Exception | None = None
+        for index, chunk in enumerate(chunks, start=1):
+            try:
+                chunk_questions = cls._parse_chunk(
+                    chunk, provider_id, index, len(chunks)
+                )
+                cls.last_parse_stats["successful_chunks"] += 1
+                cls.last_parse_stats["parsed_questions"] += len(chunk_questions)
+                parsed.extend(chunk_questions)
+            except Exception as exc:
+                # 한 구간의 일시적 실패가 전체 설문 인식을 막지 않게 한다.
+                cls.last_parse_stats["failed_chunks"] += 1
+                last_error = exc
+
+        if not parsed and last_error is not None:
+            raise last_error
+
+        # 겹치는 구간에서 중복 인식된 문항 제거. 최초 등장 순서는 유지한다.
+        unique: list[dict] = []
+        seen: set[str] = set()
+        for question in parsed:
+            key = cls._question_key(question)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(question)
+        cls.last_parse_stats["unique_questions"] = len(unique)
+        cls.last_parse_stats["duplicates_removed"] = len(parsed) - len(unique)
+        return unique

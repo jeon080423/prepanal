@@ -12,6 +12,7 @@ from config import (DISCLAIMER, METHODOLOGY_NOTE, SAMPLE_Q_PATH,
 from core import (ExportService, GenerationService, LearningService,
                   MemoryStore, QuestionnaireService, get_question_type,
                   sample_persona)
+from core.services import PdfQuestionnaireService
 from core.strategies import GenerationContext, parse_json_array
 
 
@@ -88,6 +89,31 @@ def test_parse_json_array_fences():
     assert parse_json_array('[{"Q1": "A"}]') == [{"Q1": "A"}]
     with pytest.raises(ValueError):
         parse_json_array("응답 없음")
+
+
+def test_long_questionnaire_is_chunked_and_deduplicated(monkeypatch):
+    """12,000자를 넘는 설문도 여러 호출로 처리하고 겹침 중복을 제거한다."""
+    calls = []
+
+    def fake_question_parser(provider_id, prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return json.dumps([{
+                "text": "질문 1",
+                "type": "single",
+                "options": ["예", "아니오"],
+            }], ensure_ascii=False)
+        return json.dumps([
+            {"text": "질문 1", "type": "single", "options": ["예", "아니오"]},
+            {"text": "질문 2", "type": "open", "options": []},
+        ], ensure_ascii=False)
+
+    monkeypatch.setattr("core.providers.generate", fake_question_parser)
+    parsed = PdfQuestionnaireService.parse_questions("설문 텍스트\n" + "가" * 12000)
+
+    assert len(calls) == 2
+    assert [q["text"] for q in parsed] == ["질문 1", "질문 2"]
+    assert PdfQuestionnaireService.last_parse_stats["duplicates_removed"] == 1
 
 
 # ----------------------------------------------------------------------------

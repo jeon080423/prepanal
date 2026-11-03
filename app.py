@@ -758,6 +758,14 @@ def step1():
 
 
 
+    parse_notice = st.session_state.pop("questionnaire_parse_notice", None)
+    if parse_notice:
+        st.success(parse_notice["success"])
+        if parse_notice.get("info"):
+            st.info(parse_notice["info"])
+        if parse_notice.get("warning"):
+            st.warning(parse_notice["warning"])
+
     questions = store.get("questions")
     sample_texts = {q["text"] for q in q_service.load_sample_questions()}
     custom_questions = [q for q in questions if q["text"] not in sample_texts]
@@ -800,7 +808,31 @@ def step1():
                                     new_questions.append(pq)
                                 _replace_questionnaire(new_questions)
                                 n_branch = sum(1 for q in parsed if q.get("branching"))
-                                st.success(f"{len(parsed)}개 문항을 인식했습니다. 기존 문항은 제거되었습니다. (분기 로직 {n_branch}건 포함)")
+                                stats = PdfQuestionnaireService.last_parse_stats
+                                chunk_note = ""
+                                if stats.get("total_chunks", 1) > 1:
+                                    chunk_note = (
+                                        f" {stats['total_chunks']}개 구간으로 나누어 분석했습니다."
+                                    )
+                                st.session_state["questionnaire_parse_notice"] = {
+                                    "success": (
+                                        f"{len(parsed)}개 문항을 인식했습니다.{chunk_note} "
+                                        f"기존 문항은 제거되었습니다. "
+                                        f"(분기 로직 {n_branch}건 포함)"
+                                    ),
+                                    "info": "",
+                                    "warning": "",
+                                }
+                                if stats.get("duplicates_removed", 0):
+                                    st.session_state["questionnaire_parse_notice"]["info"] = (
+                                        f"겹치는 구간에서 중복 인식된 "
+                                        f"{stats['duplicates_removed']}개 문항을 정리했습니다."
+                                    )
+                                if stats.get("failed_chunks", 0):
+                                    st.session_state["questionnaire_parse_notice"]["warning"] = (
+                                        f"{stats['failed_chunks']}개 구간은 AI 응답을 받지 못해 "
+                                        "해당 구간의 문항이 일부 누락될 수 있습니다."
+                                    )
                                 st.rerun()
                     except Exception as e:
                         st.error(f"처리 중 오류: {e}")
