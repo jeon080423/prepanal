@@ -6,7 +6,8 @@ core/* 하위 모듈을 직접 import해도 되지만, 이 __init__이 권장 �
 
 from .models import LearnedDist, NemotronPersona, Persona, Question, Transcript
 from .persona import (build_persona_texts, clear_nemotron_cache,
-                      load_nemotron_extract, nemotron_persona_to_text,
+                      load_nemotron_extract, nemotron_default_quotas,
+                      nemotron_persona_to_text,
                       persona_to_text, sample_nemotron_personas,
                       sample_persona, weighted_choice)
 from .projects import PROJECT_STATE_KEYS, ProjectStore
@@ -41,6 +42,7 @@ __all__ = [
     "weighted_choice",
     "load_nemotron_extract", "clear_nemotron_cache",
     "sample_nemotron_personas", "nemotron_persona_to_text",
+    "nemotron_default_quotas",
     "QuestionnaireService", "LearningService", "GenerationService",
     "ExportService", "PdfQuestionnaireService",
     "Store", "MemoryStore", "SessionStore",
