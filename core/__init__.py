@@ -4,9 +4,11 @@ UI(app.py)나 향후 REST API는 이 모듈에서 import한다.
 core/* 하위 모듈을 직접 import해도 되지만, 이 __init__이 권장 진입점이다.
 """
 
-from .models import LearnedDist, Persona, Question, Transcript
-from .persona import (build_persona_texts, persona_to_text, sample_persona,
-                      weighted_choice)
+from .models import LearnedDist, NemotronPersona, Persona, Question, Transcript
+from .persona import (build_persona_texts, clear_nemotron_cache,
+                      load_nemotron_extract, nemotron_persona_to_text,
+                      persona_to_text, sample_nemotron_personas,
+                      sample_persona, weighted_choice)
 from .projects import PROJECT_STATE_KEYS, ProjectStore
 from .sheets_projects import SheetsProjectStore
 from .providers import (AIProvider, PROVIDER_REGISTRY, UnknownProviderError,
@@ -23,7 +25,7 @@ from .strategies import (STRATEGY_REGISTRY, GenerationContext,
 
 __all__ = [
     # models
-    "Question", "LearnedDist", "Persona", "Transcript",
+    "Question", "LearnedDist", "Persona", "NemotronPersona", "Transcript",
     # question types (plugin point 1)
     "QuestionType", "QUESTION_TYPE_REGISTRY", "register_question_type",
     "get_question_type", "UnknownQuestionTypeError",
@@ -37,6 +39,8 @@ __all__ = [
     # persona / services / store
     "sample_persona", "persona_to_text", "build_persona_texts",
     "weighted_choice",
+    "load_nemotron_extract", "clear_nemotron_cache",
+    "sample_nemotron_personas", "nemotron_persona_to_text",
     "QuestionnaireService", "LearningService", "GenerationService",
     "ExportService", "PdfQuestionnaireService",
     "Store", "MemoryStore", "SessionStore",

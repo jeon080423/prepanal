@@ -15,10 +15,12 @@ import unicodedata
 import pandas as pd
 
 from config import (DEFAULT_BATCH_SIZE, METHODOLOGY_NOTE,
-                    QUESTIONNAIRE_PARSE_CHUNK_CHARS,
+                    NEMOTRON_EXTRACT_SIZE, NEMOTRON_EXTRACT_VERSION,
+                    PERSONA_SOURCES, QUESTIONNAIRE_PARSE_CHUNK_CHARS,
                     QUESTIONNAIRE_PARSE_OVERLAP_CHARS, SAMPLE_Q_PATH,
                     STRATEGY_ORDER)
-from .persona import sample_persona
+from .persona import (load_nemotron_extract, sample_nemotron_personas,
+                      sample_persona)
 from .question_types import get_question_type
 from .strategies import (GenerationContext, get_strategy, select_strategy)
 
@@ -107,6 +109,17 @@ class LearningService:
 class GenerationService:
     def __init__(self, strategy_order: list[str] | None = None) -> None:
         self.strategy_order = strategy_order or STRATEGY_ORDER
+        # 마지막 생성의 페르소나 메타 (출처·쿼터 달성률·완화 기록).
+        # generate_responses()는 DataFrame만 반환하고, 메타는 여기에 둔다.
+        self.last_gen_meta: dict | None = None
+        # Nemotron 모드의 원본 샘플링 메타 (쿼터 달성률 상세·완화 목록 포함)
+        self.last_nemotron_meta: dict | None = None
+
+    # Nemotron 모드의 프로필 컬럼 순서 (직접 모드의 persona_dims 대응)
+    NEMOTRON_PROFILE_COLS = (
+        "프로필_성별", "프로필_연령대", "프로필_지역", "프로필_세부지역",
+        "프로필_직업", "프로필_학력", "프로필_결혼상태",
+    )
 
     def _select_strategy(self, q: dict, ctx: GenerationContext):
         return select_strategy(q, ctx, self.strategy_order)
@@ -127,6 +140,8 @@ class GenerationService:
         transcripts: list[dict] | None = None,
         use_precision: bool = False,
         generate_fn=None,
+        persona_source: str = "manual",
+        nemotron_quotas: dict | None = None,
     ) -> pd.DataFrame:
         """가상 응답 n건을 생성해 DataFrame으로 반환.
 
@@ -135,6 +150,10 @@ class GenerationService:
         - 고정밀 컨텍스트의 선택형 → 고정밀 (인터뷰 기반)
         - 나머지 선택형 → 분포추출 (Prolific Gordon et al. 2026 방식)
         - 주관식 → 주관식 생성 (LLM 배치)
+
+        persona_source="nemotron"이면 Nemotron 발췌본에서 쿼터대로
+        페르소나를 추출한다 (응답 생성 로직은 동일). 메타(출처·쿼터
+        달성률·완화 기록)는 self.last_gen_meta에 남긴다.
         """
         rng = random.Random(seed)
         learned = learned or {}
@@ -148,7 +167,20 @@ class GenerationService:
             batch_size=batch_size,
             cache=cache if cache is not None else {},
             generate_fn=generate_fn,
+            persona_source=persona_source,
         )
+
+        # Nemotron 모드: 전체 패널을 한 번에 쿼터대로 추출한다
+        # (배치별 추출보다 쿼터 달성률이 정확하다).
+        nemotron_panel: list[dict] | None = None
+        nemotron_meta: dict | None = None
+        if persona_source == "nemotron":
+            records = load_nemotron_extract()
+            nemotron_panel, nemotron_meta = sample_nemotron_personas(
+                records, nemotron_quotas, n, rng)
+            self.last_nemotron_meta = nemotron_meta
+        else:
+            self.last_nemotron_meta = None
 
         # 문항 → 전략 매칭 (전략별 그룹)
         groups: dict[str, list[dict]] = {}
@@ -160,7 +192,12 @@ class GenerationService:
         total_batches = (n + batch_size - 1) // batch_size
         for b in range(total_batches):
             bsize = min(batch_size, n - b * batch_size)
-            personas = [sample_persona(persona_dims, rng) for _ in range(bsize)]
+            if persona_source == "nemotron":
+                personas = nemotron_panel[b * batch_size:(b + 1) * batch_size]
+                ctx.nemotron_records = personas
+            else:
+                personas = [sample_persona(persona_dims, rng)
+                            for _ in range(bsize)]
 
             sampled: list[dict] = [{} for _ in range(bsize)]
             for sname, qs in groups.items():
@@ -170,7 +207,19 @@ class GenerationService:
                     sampled[i].update(ans)
 
             for i, persona in enumerate(personas):
-                row = {f"프로필_{dim}": val for dim, val in persona.items()}
+                if persona_source == "nemotron":
+                    row = {
+                        "프로필_성별": persona.get("sex", ""),
+                        "프로필_연령대": persona.get("age_band", ""),
+                        "프로필_지역": persona.get("region", ""),
+                        "프로필_세부지역": persona.get("district", ""),
+                        "프로필_직업": persona.get("occupation", ""),
+                        "프로필_학력": persona.get("education_level", ""),
+                        "프로필_결혼상태": persona.get("marital_status", ""),
+                    }
+                else:
+                    row = {f"프로필_{dim}": val
+                           for dim, val in persona.items()}
                 for q in questions:
                     row[q["id"]] = sampled[i].get(q["id"], "")
                 rows.append(row)
@@ -178,9 +227,63 @@ class GenerationService:
             if progress_cb:
                 progress_cb((b + 1) / total_batches)
 
-        col_order = [f"프로필_{dim}" for dim in persona_dims] + [q["id"] for q in questions]
+        if persona_source == "nemotron":
+            profile_cols = list(self.NEMOTRON_PROFILE_COLS)
+        else:
+            profile_cols = [f"프로필_{dim}" for dim in persona_dims]
+        col_order = profile_cols + [q["id"] for q in questions]
         df = pd.DataFrame(rows)
-        return df[[c for c in col_order if c in df.columns]]
+        df = df[[c for c in col_order if c in df.columns]]
+
+        self.last_gen_meta = self._build_gen_meta(
+            persona_source, nemotron_meta)
+        return df
+
+    @staticmethod
+    def _build_gen_meta(persona_source: str,
+                        nemotron_meta: dict | None) -> dict:
+        """결과 화면·엑셀에 표시할 페르소나 출처 메타 (표시용 문자열 위주)."""
+        if persona_source != "nemotron" or not nemotron_meta:
+            return {
+                "페르소나 출처": PERSONA_SOURCES["manual"],
+            }
+        relaxations = nemotron_meta.get("relaxations") or []
+        relaxed = nemotron_meta.get("relaxed_count", 0)
+        if relaxed == 0:
+            quota_line = "100% (완화 없음)"
+            relax_line = "없음"
+        else:
+            by_level: dict[str, int] = {}
+            for r in relaxations:
+                by_level[r["level"]] = by_level.get(r["level"], 0) + r["shortfall"]
+            quota_line = (
+                f"완화 {relaxed}건 "
+                f"({', '.join(f'{lv} {c}건' for lv, c in sorted(by_level.items()))})"
+            )
+            relax_line = "; ".join(
+                f"{r['cell'][0]} {r['cell'][1]} {r['cell'][2]} "
+                f"{r['shortfall']}건 ({r['level']})"
+                for r in relaxations[:5]
+            )
+            if len(relaxations) > 5:
+                relax_line += f" 외 {len(relaxations) - 5}건"
+        # 차원별 최대 편차 (목표 대비 실제)
+        max_devs = []
+        for dim, vals in (nemotron_meta.get("quota_achievement") or {}).items():
+            dev = max((abs(v["actual_pct"] - v["target_pct"])
+                       for v in vals.values()), default=0.0)
+            max_devs.append(f"{dim} 최대 {dev:.1f}%p")
+        return {
+            "페르소나 출처": PERSONA_SOURCES["nemotron"],
+            "Nemotron 발췌본": (
+                f"{NEMOTRON_EXTRACT_VERSION} · "
+                f"{NEMOTRON_EXTRACT_SIZE:,}건"
+            ),
+            "쿼터 달성": quota_line,
+            "쿼터 편차": " · ".join(max_devs) if max_devs else "-",
+            "완화 기록": relax_line,
+            "쿼터 정규화": "예" if nemotron_meta.get("normalized") else "아니오",
+        }
 
 
 # ----------------------------------------------------------------------------

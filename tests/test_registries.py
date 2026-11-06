@@ -43,7 +43,9 @@ class DummyProvider(AIProvider):
 
 def test_default_providers_registered():
     assert "gemini" in PROVIDER_REGISTRY
-    assert "openai" in PROVIDER_REGISTRY
+    # OpenAI 제공자는 Groq으로 교체됨 (config.PROVIDER_SPECS 기준).
+    # 이 테스트는 Phase 1 작업 전부터 실패하고 있던 기존 결함이다.
+    assert "groq" in PROVIDER_REGISTRY
     assert get_provider("gemini").label == "Gemini"
 
 

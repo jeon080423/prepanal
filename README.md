@@ -60,6 +60,53 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
   (Pew: 평균 12%p 오차). 이 문구는 결과 화면 상단과 엑셀 다운로드의
   `방법론_안내` 시트에 고정 표시됩니다.
 
+## 페르소나 출처: Nemotron 실측분포 (Phase 1)
+
+2단계 '페르소나 설계'에서 페르소나 출처를 고를 수 있습니다.
+
+- **직접 분포 설정 (기본값)**: 기존 방식. 성별·연령대·지역·직업 비율을 손으로 정합니다.
+- **Nemotron 실측분포**: NVIDIA의 Nemotron-Personas-Korea(v1.0, CC BY 4.0)를 씁니다.
+  이 데이터셋은 KOSIS·대법원·국민건강보험공단·농촌경제연구원·네이버 클라우드의
+  실제 통계를 씨앗으로 합성한 한국인 페르소나 100만 건이며, 본 앱은 이 가운데
+  계층추출한 10,000건 발췌본(`data/nemotron_personas_10k.parquet`, 4.1MB)을 내장합니다.
+
+### 왜 실측분포인가 (장점)
+
+1. **대표성의 근거가 생깁니다.** 손으로 정한 가중치가 아니라 실측 분포에서
+   샘플링하므로, 패널 구성이 모집단을 닮았다는 근거를 제시할 수 있습니다.
+2. **가상 응답자의 맥락이 입체적입니다.** 요약·직업·가족·식생활 등 풍부한 서술을
+   프롬프트 조건으로 씁니다. 속성 나열이 아니라 한 사람의 이야기가 조건이 됩니다.
+3. **페르소나 단계의 타임아웃이 원천 차단됩니다.** 페르소나 생성이 LLM 호출에서
+   로컬 조회로 바뀌어, 이 단계에서는 API 타임아웃이 날 수 없습니다.
+4. **정밀한 지역 구성이 가능합니다.** 252개 시군구 기반 데이터입니다
+   (Phase 1 쿼터는 권역 단위, 시도 단위는 Phase 2).
+
+### 정직한 한계 (함께 읽어주세요)
+
+- 패널 구성이 모집단을 닮았다는 것이 **응답이 더 정확하다는 뜻은 아닙니다.**
+  분포가 닮았다는 것과 응답 성향까지 검증됐다는 것은 다릅니다.
+- 데이터셋은 성인(만 19세 이상)만 포함하므로 청소년 대상 조사에는 쓸 수 없습니다.
+- 직업 배정 시 성별·소득·학력 등을 독립으로 가정해 만들어졌기 때문에,
+  세부 교차 특성(예: 특정 성별×특정 전공의 직업 분포)은 실제와 다를 수 있습니다.
+- 페르소나 서술 속 이름은 합성 데이터의 일부이며 실존 인물과 무관합니다.
+  응답자 식별은 pid(P001…)로만 표시합니다.
+- 출처 표기: "페르소나: Nemotron-Personas-Korea (NVIDIA, CC BY 4.0),
+  https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea"
+  (앱 푸터·엑셀 방법론 시트·Word 리포트에 표시)
+
+### 발췌본 다시 만들기
+
+원본 다운로드부터 발췌본 검증까지 스크립트로 재현할 수 있습니다.
+
+```bash
+python3 scripts/download_nemotron_raw.py --out data/raw   # 원본 1.98GB 다운로드
+python3 scripts/build_nemotron_extract.py --raw data/raw  # 10,000건 발췌본 생성
+```
+
+검증 리포트: `data/extract_validation_report.md`
+(분포 오차 셀 기준 최대 0.44%p, 통과 기준 ±1%p / 로드 0.07초).
+원본 1.98GB는 `.gitignore` 처리되어 리포지토리에 올라가지 않습니다.
+
 ## 파일 구성
 
 ```
@@ -71,12 +118,19 @@ core/
   question_types.py     # 문항 유형 레지스트리 (플러그인 ①)
   providers.py          # AI provider 레지스트리 (플러그인 ②)
   strategies.py         # 생성 전략 레지스트리 (플러그인 ③)
-  persona.py            # 페르소나 샘플링
+  persona.py            # 페르소나 샘플링 (직접 분포 + Nemotron 실측분포)
   services.py           # Questionnaire·Learning·Generation·Export 서비스
   store.py              # Store 추상화 (SessionStore/MemoryStore)
+data/
+  nemotron_personas_10k.parquet  # Nemotron 발췌본 10,000건 (CC BY 4.0)
+  extract_validation_report.md   # 발췌본 검증 리포트
+scripts/
+  download_nemotron_raw.py       # 원본 다운로드 (1.98GB)
+  build_nemotron_extract.py      # 계층추출 발췌본 생성
 tests/
   test_registries.py    # 플러그인 등록·오류 메시지 테스트
   test_core.py          # 페르소나·학습·생성·엑셀 테스트 (LLM 모킹)
+  test_nemotron.py      # Nemotron 샘플링·텍스트·메타 테스트 (LLM 없음)
 requirements.txt        # streamlit, pandas, openpyxl, plotly
 .streamlit/config.toml  # 테마 설정
 .streamlit/secrets.toml.example  # 로컬/클라우드 secrets 템플릿 (실제 키 없음)

@@ -24,6 +24,8 @@ PROJECTS_DIR = BASE_DIR / "projects"
 PROJECT_STATE_KEYS = [
     "questions",
     "persona_dims",
+    "persona_source",
+    "nemotron_quotas",
     "transcripts",
     "use_precision",
     "learned",

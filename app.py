@@ -14,12 +14,16 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from config import (APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
-                    METHODOLOGY_NOTE, SAMPLE_XLSX_PATH)
+from config import (AGE_BANDS, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
+                    METHODOLOGY_NOTE, NEMOTRON_ATTRIBUTION,
+                    NEMOTRON_EXTRACT_RELEASE_DATE, NEMOTRON_EXTRACT_SIZE,
+                    NEMOTRON_EXTRACT_VERSION, PERSONA_SOURCES, REGION_MAP,
+                    SAMPLE_XLSX_PATH)
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type,
-                  ProjectStore, PROJECT_STATE_KEYS, SheetsProjectStore)
+                  ProjectStore, PROJECT_STATE_KEYS, SheetsProjectStore,
+                  load_nemotron_extract, nemotron_default_quotas)
 
 STEPS = ["설문 설계", "페르소나 설계", "분포 학습", "가상 응답 생성", "결과"]
 
@@ -62,6 +66,8 @@ def init_state():
     store.set_default("questions", [])
     store.set_default("persona_dims",
                       {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+    store.set_default("persona_source", "manual")
+    store.set_default("nemotron_quotas", None)
     store.set_default("transcripts", [])
     store.set_default("use_precision", False)
     store.set_default("learned", None)
@@ -571,6 +577,8 @@ with st.sidebar:
         defaults = {
             "questions": [],
             "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
+            "persona_source": "manual",
+            "nemotron_quotas": None,
             "transcripts": [],
             "use_precision": False,
             "learned": None,
@@ -614,6 +622,8 @@ with st.sidebar:
         store.set("project_id", new_pid)
         store.set("questions", [])
         store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+        store.set("persona_source", "manual")
+        store.set("nemotron_quotas", None)
         store.set("transcripts", [])
         store.set("use_precision", False)
         store.set("learned", None)
@@ -935,16 +945,102 @@ def step1():
 
 
 # ----------------------------------------------------------------------------
+# Step 2: 페르소나 설계 — Nemotron 쿼터 UI
+# ----------------------------------------------------------------------------
+_NEMOTRON_QUOTA_DIMS = {
+    "연령대": [label for label, _, _ in AGE_BANDS],
+    "성별": ["여성", "남성"],
+    "지역": list(REGION_MAP.keys()),
+}
+
+
+def _render_nemotron_quota_ui() -> bool:
+    """Nemotron 비율 쿼터 입력 UI. 발췌본 로드 상태와 합계 검증을 함께 보여준다.
+
+    Returns:
+        쿼터가 유효한지 (모든 차원 합계 100% + 발췌본 로드 성공).
+    """
+    try:
+        records = load_nemotron_extract()
+    except ValueError as exc:
+        st.error(str(exc))
+        st.info("Nemotron 출처를 쓸 수 없습니다. "
+                "발췌본 파일(data/nemotron_personas_10k.parquet)을 확인해 주세요.")
+        return False
+    st.success(
+        f"Nemotron 발췌본 {len(records):,}건 로드됨 "
+        f"({NEMOTRON_EXTRACT_VERSION}, {NEMOTRON_EXTRACT_RELEASE_DATE})"
+    )
+    quotas = store.get("nemotron_quotas")
+    if not quotas:
+        quotas = nemotron_default_quotas(records)
+        store.set("nemotron_quotas", quotas)
+
+    valid = True
+    for dim, cats in _NEMOTRON_QUOTA_DIMS.items():
+        with st.container(border=True):
+            st.subheader(dim)
+            dim_quota = quotas.setdefault(dim, {})
+            cols = st.columns(max(1, len(cats)))
+            for i, cat in enumerate(cats):
+                with cols[i % len(cols)]:
+                    v = st.number_input(
+                        cat, min_value=0.0, max_value=100.0,
+                        value=float(dim_quota.get(cat, 0.0)),
+                        step=1.0, key=f"nemotron_pct_{dim}_{cat}",
+                    )
+                    dim_quota[cat] = v
+            store.set("nemotron_quotas", quotas)
+            total = sum(dim_quota.get(c, 0.0) for c in cats)
+            if abs(total - 100.0) > 0.01:
+                st.error(f"합계가 100%가 아닙니다 (현재 {total:.1f}%).")
+                valid = False
+            else:
+                st.success("합계 100% 확인")
+    if st.button("쿼터 초기화 (발췌본 분포대로)"):
+        store.set("nemotron_quotas", nemotron_default_quotas(records))
+        st.rerun()
+    st.caption(
+        "초기값은 발췌본 분포 그대로입니다. 합계가 100%가 아니면 다음 단계로 "
+        "이동할 수 없습니다. 좁은 셀(예: 제주 70대 이상 여성)은 발췌본에 부족할 "
+        "수 있으며, 이 경우 완화 규칙에 따라 채우고 완화 기록을 결과에 남깁니다."
+    )
+    return valid
+
+
+# ----------------------------------------------------------------------------
 # Step 2: 페르소나 설계
 # ----------------------------------------------------------------------------
 def step2():
 
 
 
+    source = store.get("persona_source") or "manual"
+    source = st.radio(
+        "페르소나 출처",
+        options=list(PERSONA_SOURCES.keys()),
+        format_func=lambda k: PERSONA_SOURCES[k],
+        index=list(PERSONA_SOURCES.keys()).index(source)
+        if source in PERSONA_SOURCES else 0,
+        horizontal=True,
+        key="persona_source_radio",
+    )
+    if source != store.get("persona_source"):
+        store.set("persona_source", source)
+        st.rerun()
+    if source == "nemotron":
+        st.caption(
+            "실측 분포 기반: NVIDIA Nemotron-Personas-Korea(v1.0)의 한국인 "
+            "페르소나 100만 건에서 계층추출한 10,000건 발췌본에서 쿼터대로 추출합니다. "
+            "손으로 정한 가중치가 아니라 실측 분포에서 샘플링하므로 패널 구성이 "
+            "모집단을 닮았다는 근거를 제시할 수 있습니다."
+        )
+
     dims = store.get("persona_dims")
     valid = True
 
-    for dim in list(dims.keys()):
+    manual_dims = list(dims.keys()) if source == "manual" else []
+    for dim in manual_dims:
         with st.container(border=True):
             h1, h2 = st.columns([5, 1])
             with h1:
@@ -985,12 +1081,16 @@ def step2():
                     store.set("persona_dims", dims)
                     st.rerun()
 
-    with st.expander("새 인구통계 차원 추가"):
-        new_dim = st.text_input("차원 이름", placeholder="예: 소득대")
-        if st.button("차원 추가") and new_dim.strip():
-            dims[new_dim.strip()] = {"구분1": 50.0, "구분2": 50.0}
-            store.set("persona_dims", dims)
-            st.rerun()
+    if source == "manual":
+        with st.expander("새 인구통계 차원 추가"):
+            new_dim = st.text_input("차원 이름", placeholder="예: 소득대")
+            if st.button("차원 추가") and new_dim.strip():
+                dims[new_dim.strip()] = {"구분1": 50.0, "구분2": 50.0}
+                store.set("persona_dims", dims)
+                st.rerun()
+
+    if source == "nemotron":
+        valid = _render_nemotron_quota_ui()
 
     st.subheader("고정밀 모드 (인터뷰 기반)")
     with st.container(border=True):
@@ -999,6 +1099,12 @@ def step2():
             "1인당 약 2시간의 인터뷰 트랜스크립트가 필요합니다. "
             "트랜스크립트를 업로드하면 생성 단계에서 고정밀 모드를 켤 수 있습니다."
         )
+        if store.get("persona_source") == "nemotron":
+            st.info(
+                "Nemotron 출처와는 함께 쓸 수 없습니다 — 고정밀 모드는 인터뷰 기반 "
+                "조건을 쓰기 때문에, Nemotron 선택 시 생성 단계에서 고정밀 모드가 "
+                "자동으로 꺼집니다."
+            )
         files = st.file_uploader(
             "인터뷰 트랜스크립트 업로드 (.txt, .md)",
             type=["txt", "md"],
@@ -1160,15 +1266,21 @@ def step4():
             else "- 선택형 문항: Prolific 연구팀(Gordon et al., 2026) 방식 — LLM이 페르소나별 보기별 선택 확률분포를 추정하면 샘플링 (분포 오차 35~48% 감소 보고)"
         )
         st.write("- 주관식 문항: LLM 배치 생성")
+        source_label = PERSONA_SOURCES.get(
+            store.get("persona_source") or "manual", "")
+        st.write(f"- 페르소나 출처: {source_label}")
         n_trans = len(store.get("transcripts"))
+        nemotron_on = store.get("persona_source") == "nemotron"
         use_precision = st.checkbox(
             "고정밀 모드 (인터뷰 기반)",
-            value=store.get("use_precision") and n_trans > 0,
-            disabled=n_trans == 0,
+            value=store.get("use_precision") and n_trans > 0 and not nemotron_on,
+            disabled=n_trans == 0 or nemotron_on,
             help="스탠포드 Generative Agents 연구: 정규화 정확도 83%. 트랜스크립트 업로드 시 활성화.",
         )
-        store.set("use_precision", use_precision and n_trans > 0)
-        if n_trans == 0:
+        store.set("use_precision", use_precision and n_trans > 0 and not nemotron_on)
+        if nemotron_on:
+            st.caption("Nemotron 출처와는 함께 쓸 수 없습니다 (인터뷰 기반 고정밀 모드와 중복됩니다).")
+        elif n_trans == 0:
             st.caption("인터뷰 트랜스크립트를 업로드하면 활성화됩니다 (2단계에서 업로드).")
 
     n = st.number_input("생성할 응답자 수", min_value=1, max_value=200, value=30, step=1)
@@ -1194,19 +1306,24 @@ def step4():
                     cache=store.get("gen_cache"),
                     transcripts=store.get("transcripts") if store.get("use_precision") else None,
                     use_precision=store.get("use_precision"),
+                    persona_source=store.get("persona_source") or "manual",
+                    nemotron_quotas=store.get("nemotron_quotas"),
                 )
                 store.set("results_df", df)
                 prov = get_provider(provider)
                 used_model = prov.last_used_model or current_model()
                 auto_switched = used_model != current_model()
-                store.set("gen_meta", {
+                gen_meta = {
                     "생성일시": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "AI": prov.label,
                     "모델": used_model,
                     "응답자 수": int(n),
                     "분포 학습": "사용" if has_learned else "미사용",
                     "고정밀 모드": "사용" if store.get("use_precision") else "미사용",
-                })
+                }
+                if gen_service.last_gen_meta:
+                    gen_meta.update(gen_service.last_gen_meta)
+                store.set("gen_meta", gen_meta)
                 progress.progress(1.0, text="완료")
                 st.success(f"{len(df)}건 생성 완료")
                 if auto_switched:
@@ -1462,3 +1579,10 @@ with main_col:
     {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
         f"step{step}"
     ]()
+
+# ----------------------------------------------------------------------------
+# 푸터 — 데이터 출처 표기 (CC BY 4.0) + 정직한 한계 고지
+# ----------------------------------------------------------------------------
+st.divider()
+st.caption(NEMOTRON_ATTRIBUTION)
+st.caption(DISCLAIMER)

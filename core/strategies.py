@@ -47,6 +47,10 @@ class GenerationContext:
     batch_size: int = 5
     cache: dict = field(default_factory=dict)
     generate_fn: Callable[[str, str, str], object] | None = None  # DI (테스트용)
+    # Nemotron 출처 (Phase 1): "manual"(기본) 또는 "nemotron".
+    # nemotron_records는 현재 배치에 샘플링된 Nemotron 레코드 목록.
+    persona_source: str = "manual"
+    nemotron_records: list[dict] | None = None
 
     def text_generate(self, prompt: str) -> str:
         fn = self.generate_fn or providers_mod.generate
@@ -159,10 +163,21 @@ class GenerationStrategy(ABC):
 
     def persona_texts(self, ctx: GenerationContext, personas: list[dict],
                       rng: random.Random) -> list[str]:
-        """기본: 인구통계 페르소나. 고정밀 컨텍스트면 인터뷰 기반."""
+        """기본: 인구통계 페르소나. 고정밀 컨텍스트면 인터뷰 기반.
+
+        우선순위: transcripts(고정밀) → nemotron → manual.
+        Nemotron이면 personas(또는 ctx.nemotron_records)를 서술 기반
+        프로필 텍스트로 합성한다.
+        """
         use_t = ctx.use_precision and bool(ctx.transcripts)
-        return build_persona_texts(
-            personas, rng, transcripts=ctx.transcripts if use_t else None)
+        if use_t:
+            return build_persona_texts(
+                personas, rng, transcripts=ctx.transcripts)
+        if ctx.persona_source == "nemotron":
+            records = (ctx.nemotron_records if ctx.nemotron_records is not None
+                       else personas)
+            return build_persona_texts(records, rng, persona_source="nemotron")
+        return build_persona_texts(personas, rng)
 
 
 def _has_learned_dist(q: dict, ctx: GenerationContext) -> bool:

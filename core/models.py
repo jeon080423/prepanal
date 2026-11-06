@@ -47,6 +47,28 @@ class Persona(TypedDict, total=False):
     """{차원: 구분} 예: {"성별": "여성", "연령대": "30대"}"""
 
 
+class NemotronPersona(TypedDict, total=False):
+    """Nemotron 발췌본 1건 분량 (data/nemotron_personas_10k.parquet).
+
+    sex/age_band/region은 발췌본 빌드 시 정규화된 값이다
+    (sex: 여성/남성, age_band: 20대~60대·70대 이상, region: 권역 5개).
+    """
+    pid: str
+    sex: str
+    age: int
+    age_band: str
+    province: str
+    district: str
+    region: str
+    education_level: str
+    occupation: str
+    marital_status: str
+    persona: str
+    professional_persona: str
+    family_persona: str
+    culinary_persona: str
+
+
 class Transcript(TypedDict, total=False):
     name: str
     text: str
