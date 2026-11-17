@@ -278,6 +278,11 @@ st.markdown(
     [data-testid="stSidebar"] * {
         color: #FFFFFF !important;
     }
+    /* 사이드바 알림 박스(success/warning/info/error)는 밝은 배경이라 글씨를 검정으로 */
+    [data-testid="stSidebar"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] *,
+    [data-testid="stSidebar"] [data-testid="stAlert"] p {
+        color: #1e293b !important;
+    }
     [data-testid="stSidebar"] .stCaption {
         color: #CCCCCC !important;
     }
@@ -474,6 +479,9 @@ st.markdown(
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_"] button p {
         text-align: left !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        color: #FFFFFF !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_complete_"] button::before {
         color: #4ADE80 !important;
