@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from config import PANEL_POPULATION_DIFF_THRESHOLD_PP
+
 
 # 임계값 (조정 가능)
 CEILING_THRESHOLD = 0.85      # 한 보기가 85% 이상이면 천장/바닥 효과
@@ -17,11 +19,24 @@ SHORT_ANSWER_LEN = 5          # 주관식 5자 미만은 부실 응답
 SHORT_ANSWER_RATIO = 0.3      # 부실 응답 30% 이상이면 문제
 
 
-def diagnose(df: pd.DataFrame, questions: list[dict]) -> list[dict]:
+def diagnose(df: pd.DataFrame, questions: list[dict],
+               panel_reference: dict[str, dict[str, float]] | None = None,
+               panel_threshold_pp: float = PANEL_POPULATION_DIFF_THRESHOLD_PP
+               ) -> list[dict]:
     """데이터프레임과 문항 목록을 받아 진단 결과 리스트를 반환.
 
     각 결과: {"문항": str, "문제": str, "근거": str, "해결책": str, "심각도": str}
     문제가 없으면 빈 리스트를 반환합니다 (환각 방지: 없는 문제를 만들지 않음).
+
+    panel_reference (Phase 2, 선택 사항): 패널 구성과 비교할 모집단 분포.
+        {"성별": {"여성": 50.4, "남성": 49.6},
+         "연령대": {"20대": 14.6, ...},
+         "지역": {"수도권": 50.6, ...}} — 값은 % 단위.
+        발췌본 분포는 reference_distribution_from_records()로 만든다.
+        None이면 패널-모집단 비교 진단을 건너뛴다 (기존 호출부 동작 유지).
+        차이가 panel_threshold_pp(기본 5%p) 이상인 셀이 있으면
+        심각도 "참고"로 보고한다 — 응답 품질 판단이 아니라 패널 구성의
+        투명성을 위한 것이다.
     """
     findings: list[dict] = []
     if df is None or df.empty:
@@ -86,6 +101,91 @@ def diagnose(df: pd.DataFrame, questions: list[dict]) -> list[dict]:
                 "심각도": "높음",
             })
 
+    # 5. 패널-모집단 비교 (Phase 2 — panel_reference가 주어진 경우만)
+    if panel_reference:
+        findings.extend(_diagnose_panel_composition(
+            df, panel_reference, panel_threshold_pp))
+
+    return findings
+
+
+# ----------------------------------------------------------------------------
+# 패널-모집단 비교 진단 (Phase 2)
+# ----------------------------------------------------------------------------
+# 프로필 컬럼 → 참조 분포 차원 매핑
+# 생성 결과 DataFrame의 프로필_ 컬럼과, 샘플링된 레코드 그대로의
+# DataFrame(sex/age_band/region 컬럼)을 둘 다 받는다.
+_PANEL_DIMS = {
+    "프로필_성별": "성별",
+    "프로필_연령대": "연령대",
+    "프로필_지역": "지역",
+    "sex": "성별",
+    "age_band": "연령대",
+    "region": "지역",
+}
+
+
+def reference_distribution_from_records(
+        records: list[dict]) -> dict[str, dict[str, float]]:
+    """Nemotron 발췌본 레코드에서 차원별 분포(%)를 만든다.
+
+    diagnose()의 panel_reference 인자로 그대로 쓴다.
+    발췌본 분포 ≒ 모집단 분포라는 전제는 설계안 §10과 같다.
+    """
+    dims: dict[str, dict[str, float]] = {
+        "성별": {}, "연령대": {}, "지역": {}}
+    for r in records:
+        for dim, field in (("성별", "sex"), ("연령대", "age_band"),
+                           ("지역", "region")):
+            val = str(r.get(field, ""))
+            if not val:
+                continue
+            dims[dim][val] = dims[dim].get(val, 0.0) + 1.0
+    total = max(sum(dims["성별"].values()), 1.0)
+    return {dim: {k: v / total * 100.0 for k, v in vals.items()}
+            for dim, vals in dims.items()}
+
+
+def _diagnose_panel_composition(
+        df: pd.DataFrame,
+        panel_reference: dict[str, dict[str, float]],
+        threshold_pp: float) -> list[dict]:
+    """패널의 연령대·성별·지역 분포와 참조(모집단) 분포를 비교한다.
+
+    차이가 threshold_pp 이상인 셀이 있는 차원마다 1건씩,
+    심각도 "참고"로 보고한다.
+    """
+    findings: list[dict] = []
+    n = len(df)
+    if n == 0:
+        return findings
+    seen_dims: set[str] = set()
+    for col, dim in _PANEL_DIMS.items():
+        if dim in seen_dims:
+            continue
+        ref = panel_reference.get(dim)
+        if not ref or col not in df.columns:
+            continue
+        seen_dims.add(dim)
+        actual = df[col].astype(str).value_counts(normalize=True) * 100
+        deviating: list[str] = []
+        for val in sorted(set(ref) | set(actual.index)):
+            diff = actual.get(val, 0.0) - float(ref.get(val, 0.0))
+            if abs(diff) >= threshold_pp:
+                sign = "+" if diff >= 0 else ""
+                deviating.append(
+                    f"{val} {actual.get(val, 0.0):.1f}% "
+                    f"(모집단 {float(ref.get(val, 0.0)):.1f}%, {sign}{diff:.1f}%p)")
+        if deviating:
+            findings.append({
+                "문항": "(패널 구성)",
+                "문제": f"패널-모집단 분포 차이 — {dim} 구성이 모집단과 다름",
+                "근거": "; ".join(deviating),
+                "해결책": "의도한 쿼터(특정 집단 과대표집 등)가 아니라면 쿼터를 "
+                          "모집단 분포에 가깝게 조정하세요. 이 진단은 참고용이며 "
+                          "응답 품질 판정이 아닙니다.",
+                "심각도": "참고",
+            })
     return findings
 
 

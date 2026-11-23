@@ -9,16 +9,22 @@
 """
 
 from datetime import datetime
+from pathlib import Path
+
+import hashlib
+import json
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from config import (AGE_BANDS, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
-                    METHODOLOGY_NOTE, NEMOTRON_ATTRIBUTION,
+                    METHODOLOGY_NOTE, NEMOTRON_ALL_FACETS, NEMOTRON_ATTRIBUTION,
                     NEMOTRON_EXTRACT_RELEASE_DATE, NEMOTRON_EXTRACT_SIZE,
-                    NEMOTRON_EXTRACT_VERSION, PERSONA_SOURCES, REGION_MAP,
-                    SAMPLE_XLSX_PATH)
+                    NEMOTRON_EXTRACT_VERSION, NEMOTRON_FACETS,
+                    NEMOTRON_FACET_LABELS, NEMOTRON_PROVINCES, PERSONA_SOURCES,
+                    REGION_MAP, SAMPLE_XLSX_PATH)
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type,
@@ -68,6 +74,10 @@ def init_state():
                       {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
     store.set_default("persona_source", "manual")
     store.set_default("nemotron_quotas", None)
+    store.set_default("nemotron_quota_mode", "ratio")
+    store.set_default("nemotron_count_quotas", None)
+    store.set_default("nemotron_region_level", "region")
+    store.set_default("nemotron_facets", None)
     store.set_default("transcripts", [])
     store.set_default("use_precision", False)
     store.set_default("learned", None)
@@ -110,8 +120,68 @@ def verify_access_code(code: str) -> tuple[bool, str]:
 
 
 def goto(step: int):
+    _autosave_current_project()
     store.set("step", step)
     st.rerun()
+
+
+# ----------------------------------------------------------------------------
+# 저장 상태 추적 (UX 개선 ②·④: 저장 상태 지속 표시 + 미저장 소실 방지)
+# ----------------------------------------------------------------------------
+def _current_state_snapshot() -> dict:
+    """현재 프로젝트 상태를 직렬화 가능한 스냅샷으로 반환."""
+    state = {k: store.get(k) for k in PROJECT_STATE_KEYS}
+    prov_id = store.get("provider")
+    state["model_select"] = store.get(f"model_select_{prov_id}")
+    return state
+
+
+def _state_fingerprint(state: dict) -> str:
+    """상태 스냅샷의 지문 (dirty 판정용). DataFrame은 내용 해시로 변환."""
+    def _norm(v):
+        if v is None:
+            return None
+        if isinstance(v, pd.DataFrame):
+            try:
+                digest = hashlib.md5(
+                    v.to_csv(index=False).encode("utf-8")
+                ).hexdigest()[:12]
+            except Exception:
+                digest = str(len(v))
+            return {"__df__": [len(v), list(v.columns), digest]}
+        try:
+            return json.loads(json.dumps(v, default=str, ensure_ascii=False))
+        except Exception:
+            return str(v)
+    normed = {k: _norm(v) for k, v in state.items()}
+    raw = json.dumps(normed, default=str, ensure_ascii=False, sort_keys=True)
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _autosave_current_project():
+    """단계 이동 시 자동 저장. 저장 실패는 무시하고 이동을 계속한다."""
+    try:
+        save_fn = globals().get("_save_current_project")
+        if save_fn is not None and is_code_verified() and store.get("project_id"):
+            save_fn()
+    except Exception:
+        pass
+
+
+def _is_current_state_saved() -> bool:
+    """현재 상태가 마지막 저장(또는 불러오기)과 동일한지 반환."""
+    pid = store.get("project_id")
+    if not pid:
+        return False
+    if st.session_state.get("_last_saved_pid") != pid:
+        return False
+    saved_fp = st.session_state.get("_last_saved_fp")
+    if not saved_fp:
+        return False
+    try:
+        return _state_fingerprint(_current_state_snapshot()) == saved_fp
+    except Exception:
+        return False
 
 # ----------------------------------------------------------------------------
 # 이론적 배경 (팝업 다이얼로그)
@@ -219,7 +289,56 @@ LLM으로부터 추출한 뒤 샘플링합니다.
 """
     )
 
-    st.subheader("5. 한계점")
+    st.subheader("5. Nemotron 페르소나 출처 (Phase 1)")
+    st.markdown(
+        """
+본 도구의 페르소나 출처 중 하나는 **Nemotron-Personas-Korea v1.0 (NVIDIA, CC BY 4.0)**입니다.
+KOSIS·대법원·국민건강보험공단·농촌경제연구원·네이버 클라우드의 실제 통계를 씨앗으로 합성한
+한국인 페르소나 100만 건 중, 계층추출한 **10,000건 발췌본**을 사용합니다.
+
+- **분포 오차**: 셀 기준 최대 0.44%p (통과 기준 ±1%p 이내)
+- **대표성의 근거**: 손으로 정한 가중치가 아니라 실측 분포 기반 샘플링(계층추출)이므로,
+  패널 구성이 모집단을 닮았다는 근거를 제시할 수 있습니다.
+- **주의**: 대표성이 좋아졌다고 응답 정확도가 좋아졌다는 뜻은 아닙니다.
+  패널 구성이 모집단을 닮았다는 것과, 그 패널이 실제 사람처럼 응답한다는 것은 별개의 문제입니다.
+"""
+    )
+
+    st.subheader("6. 응답 동질화·분산 붕괴 문제와 대응 방향")
+    st.markdown(
+        """
+LLM 합성응답자의 가장 큰 약점은 **응답 동질화**입니다. 실제 사람들은 같은 질문에도
+다양하게 응답하지만, LLM은 다수 의견(Modal Response) 하나로 과도하게 쏠리고
+응답 분산이 붕괴되는 경향이 있습니다.
+
+**근거 — Li 등 (2025, arXiv:2507.02919)**
+ANES 실측과 비교한 극단적 동질화 비율(VR < 0.05)은 낙태 이슈에서 실제 40% 대
+GPT-4·Llama 405B 80%, 이민 이슈에서 실제 30% 대 LLM 100%에 육박했습니다.
+즉, LLM은 실제보다 훨씬 더 한쪽 의견으로 몰립니다.
+
+**대응 방향 (분산 복원 고도화 진행 중)**
+- **확률분포 샘플링**: 강제 단일 응답을 금지하고 보기별 선택 확률분포에서 샘플링
+- **temperature 조절**: 생성 온도를 조정해 응답 다양성을 확보
+- **반최빈값 보정**: 최빈값으로의 쏠림을 완화하는 보정
+- **혼합 샘플링**: 여러 샘플링 방식을 혼합해 분산을 복원
+"""
+    )
+
+    st.subheader("7. 검증 방식")
+    st.markdown(
+        """
+**통계청 자료를 벤치마크**로 사용해 합성응답자의 품질을 재는 검증 체계를 구축 중입니다.
+측정 지표는 다음과 같습니다.
+
+- **평균 오차**: 합성 분포와 실측 분포의 문항별 평균 차이
+- **SD 비율**: 합성 응답 표준편차 / 실측 표준편차 (1에 가까울수록 분산 복원 양호)
+- **변이율(VR, Variation Ratio)**: 최빈값 외 응답 비율 — 동질화 정도를 재는 핵심 지표
+- **JSD (Jensen-Shannon Divergence)**: 합성 분포와 실측 분포 사이의 거리
+- **소수 의견 재현율**: 실측에 존재하는 소수 의견이 합성 응답에서도 나타나는지 여부
+"""
+    )
+
+    st.subheader("8. 한계점")
     st.warning(
         "합성응답자는 탐색적·방향성 리서치용이며 인간 실측을 대체할 수 없습니다. "
         "(Pew Research: 평균 12%p 오차)"
@@ -230,18 +349,40 @@ LLM으로부터 추출한 뒤 샘플링합니다.
 - **편향 증폭 위험**: 학습 데이터의 편향이 합성 응답에 그대로 반영될 수 있습니다.
 - **과적합 주의**: 소수 실제 데이터에 과도하게 맞추면 일반화 성능이 떨어집니다.
 - **용도 제한**: 본조사 대체가 아닌, 본조사 **전** 파일럿 검증용으로만 사용해야 합니다.
+- **성인만 포함**: 페르소나 발췌본은 19세 이상 성인만 포함하므로, 미성년 대상 조사의 파일럿에는 쓸 수 없습니다.
+- **교차 특성 주의**: 직업 배정 시 성별·소득·학력을 독립으로 가정하므로, 교차 특성(예: 특정 성별·학력 조합의 직업 분포)이 실제와 다를 수 있습니다.
 """
     )
 
-    st.subheader("6. 참고 문헌")
+    st.subheader("9. 참고 문헌")
     st.markdown(
         """
 - Gordon, A. et al. (Prolific, 2026). 합성응답자(synthetic respondents) 분포 추정 연구 (pre-print). 페르소나별 확률분포 추출 방식이 강제 단일 응답 대비 분포 오차 35~48% 감소. (Research Live, 2026-08-24 보도)
 - Park et al. Stanford Generative Agents 연구 (정규화 정확도 83%).
 - Pew Research Center. 합성응답자와 인간 실측 비교 (평균 12%p 오차).
 - Gemini Pro: 1,000개 설문 공개 벤치마크에서 표준 LLM 중 최고 성능 (67%).
+- Li, X. et al. (2025). LLM 합성응답자의 응답 동질화 연구 (arXiv:2507.02919). ANES 실측 대비 극단적 동질화 비율(VR < 0.05) — 낙태 이슈 실제 40% vs GPT-4·Llama 405B 80%, 이민 이슈 실제 30% vs LLM 100%에 육박.
 """
     )
+
+
+@st.dialog("업데이트 기록", width="large")
+def update_log_dialog():
+    """UPDATE_LOG.md 내용을 그대로 보여주는 다이얼로그.
+
+    Streamlit Cloud 배포 환경에서도 레포 파일이 함께 배포되므로
+    app.py와 같은 디렉터리의 UPDATE_LOG.md를 직접 읽는다.
+    """
+    log_path = Path(__file__).parent / "UPDATE_LOG.md"
+    try:
+        text = log_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        st.info("업데이트 기록이 없습니다.")
+        return
+    except OSError:
+        st.info("업데이트 기록을 불러오지 못했습니다.")
+        return
+    st.markdown(text)
 
 
 def current_model() -> str:
@@ -550,6 +691,7 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.error(msg)
+        st.caption("💡 코드를 확인하면 📁 프로젝트 관리가 나타납니다.")
 
     # 프로젝트 관리 (Google Sheets 우선, 실패 시 로컬 파일로 폴백)
     _storage_label = "💻 로컬 (리부트 시 삭제됨)"
@@ -578,6 +720,10 @@ with st.sidebar:
         prov_id = store.get("provider")
         state["model_select"] = store.get(f"model_select_{prov_id}")
         _project_store.save_project(pid, state)
+        # 저장 상태 기록 (지속 표시·dirty 판정용)
+        st.session_state["_last_saved_pid"] = pid
+        st.session_state["_last_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        st.session_state["_last_saved_fp"] = _state_fingerprint(state)
 
     def _load_project_to_store(pid: str):
         state = _project_store.load_project(pid)
@@ -587,6 +733,10 @@ with st.sidebar:
             "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
             "persona_source": "manual",
             "nemotron_quotas": None,
+            "nemotron_quota_mode": "ratio",
+            "nemotron_count_quotas": None,
+            "nemotron_region_level": "region",
+            "nemotron_facets": None,
             "transcripts": [],
             "use_precision": False,
             "learned": None,
@@ -607,6 +757,20 @@ with st.sidebar:
         store.set("step", 1)
         # 결과 관련 캐시 초기화
         store.set("gen_cache", {})
+        # 불러온 상태는 저장된 상태와 동일하므로 저장 지점을 기록
+        st.session_state["_last_saved_pid"] = pid
+        try:
+            st.session_state["_last_saved_fp"] = _state_fingerprint(
+                _current_state_snapshot()
+            )
+        except Exception:
+            st.session_state["_last_saved_fp"] = ""
+        try:
+            st.session_state["_last_saved_at"] = (
+                _project_store.get_meta(pid).get("updated_at", "")
+            )
+        except Exception:
+            st.session_state["_last_saved_at"] = ""
 
     # 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
     # 단, 액세스 코드 입력 전/직후에는 기존 작업을 불러오지 않고 기본 페이지로 시작
@@ -632,6 +796,10 @@ with st.sidebar:
         store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
         store.set("persona_source", "manual")
         store.set("nemotron_quotas", None)
+        store.set("nemotron_quota_mode", "ratio")
+        store.set("nemotron_count_quotas", None)
+        store.set("nemotron_region_level", "region")
+        store.set("nemotron_facets", None)
         store.set("transcripts", [])
         store.set("use_precision", False)
         store.set("learned", None)
@@ -668,6 +836,14 @@ with st.sidebar:
             help="현재 단계" if status == "current" else f"{step_name} 단계로 이동",
         ):
             goto(step_number)
+
+    st.divider()
+    st.subheader("이론적 배경")
+    # 맨 아래 기존 버튼과 라벨이 같으므로 key 필수 (DuplicateWidgetID 방지)
+    if st.button("📖 이론적 배경", use_container_width=True, key="theory_bg_sidebar_top"):
+        theory_dialog()
+    if st.button("업데이트 기록", use_container_width=True, key="update_log_sidebar"):
+        update_log_dialog()
 
     st.divider()
     st.subheader("AI 설정")
@@ -963,10 +1139,14 @@ _NEMOTRON_QUOTA_DIMS = {
 
 
 def _render_nemotron_quota_ui() -> bool:
-    """Nemotron 비율 쿼터 입력 UI. 발췌본 로드 상태와 합계 검증을 함께 보여준다.
+    """Nemotron 쿼터 입력 UI. 발췌본 로드 상태와 합계 검증을 함께 보여준다.
+
+    Phase 2: 비율/건수 쿼터 방식 선택, 지역 단위(권역/시도) 선택,
+    조사 주제별 페르소나 측면 선택을 지원한다.
 
     Returns:
-        쿼터가 유효한지 (모든 차원 합계 100% + 발췌본 로드 성공).
+        쿼터가 유효한지 (비율 모드: 모든 차원 합계 100% + 발췌본 로드 성공,
+        건수 모드: 셀 1개 이상 등록 + 발췌본 로드 성공).
     """
     try:
         records = load_nemotron_extract()
@@ -979,39 +1159,125 @@ def _render_nemotron_quota_ui() -> bool:
         f"Nemotron 발췌본 {len(records):,}건 로드됨 "
         f"({NEMOTRON_EXTRACT_VERSION}, {NEMOTRON_EXTRACT_RELEASE_DATE})"
     )
+
+    # (c) 지역 단위 선택 (비율·건수 공통)
+    level = st.radio(
+        "지역 단위", options=["region", "province"],
+        format_func=lambda k: {"region": "권역 (5개)",
+                               "province": "시도 (17개)"}[k],
+        index=0 if store.get("nemotron_region_level") != "province" else 1,
+        horizontal=True, key="nemotron_region_level_radio",
+    )
+    if level != store.get("nemotron_region_level"):
+        store.set("nemotron_region_level", level)
+        store.set("nemotron_quotas",
+                  nemotron_default_quotas(records, region_level=level))
+        # 지역 키 체계가 바뀌므로 건수 쿼터는 초기화한다.
+        store.set("nemotron_count_quotas", None)
+        st.rerun()
+    region_cats = (list(NEMOTRON_PROVINCES) if level == "province"
+                   else list(REGION_MAP.keys()))
+
+    # (a) 쿼터 방식 선택
+    mode = st.radio(
+        "쿼터 방식", options=["ratio", "count"],
+        format_func=lambda k: {"ratio": "비율 쿼터 (%)",
+                               "count": "건수 쿼터 (셀별 목표 건수)"}[k],
+        index=0 if store.get("nemotron_quota_mode") != "count" else 1,
+        horizontal=True, key="nemotron_quota_mode_radio",
+    )
+    store.set("nemotron_quota_mode", mode)
+
     quotas = store.get("nemotron_quotas")
-    if not quotas:
-        quotas = nemotron_default_quotas(records)
+    if (not quotas
+            or set(quotas.get("지역", {}).keys()) != set(region_cats)):
+        quotas = nemotron_default_quotas(records, region_level=level)
         store.set("nemotron_quotas", quotas)
 
     valid = True
-    for dim, cats in _NEMOTRON_QUOTA_DIMS.items():
-        with st.container(border=True):
-            st.subheader(dim)
-            dim_quota = quotas.setdefault(dim, {})
-            cols = st.columns(max(1, len(cats)))
-            for i, cat in enumerate(cats):
-                with cols[i % len(cols)]:
-                    v = st.number_input(
-                        cat, min_value=0.0, max_value=100.0,
-                        value=float(dim_quota.get(cat, 0.0)),
-                        step=1.0, key=f"nemotron_pct_{dim}_{cat}",
-                    )
-                    dim_quota[cat] = v
-            store.set("nemotron_quotas", quotas)
-            total = sum(dim_quota.get(c, 0.0) for c in cats)
-            if abs(total - 100.0) > 0.01:
-                st.error(f"합계가 100%가 아닙니다 (현재 {total:.1f}%).")
-                valid = False
-            else:
-                st.success("합계 100% 확인")
+    if mode == "count":
+        # (b) 건수 쿼터 입력 UI
+        st.caption("건수 쿼터가 비율 쿼터보다 우선합니다. 비율 쿼터는 무시됩니다.")
+        counts = store.get("nemotron_count_quotas") or {}
+        c1, c2, c3, c4 = st.columns(4)
+        age = c1.selectbox("연령대", [label for label, _, _ in AGE_BANDS],
+                           key="count_age")
+        sex = c2.selectbox("성별", ["여성", "남성"], key="count_sex")
+        region_key = c3.selectbox("지역", region_cats, key="count_region")
+        n_cell = c4.number_input("건수", min_value=1, max_value=200, value=10,
+                                 step=1, key="count_n")
+        if st.button("셀 추가", key="count_add"):
+            counts[f"{age}|{sex}|{region_key}"] = int(n_cell)
+            store.set("nemotron_count_quotas", counts)
+            st.rerun()
+        for key in sorted(counts):
+            col_l, col_r = st.columns([5, 1])
+            with col_l:
+                st.write(f"{key.replace('|', ' · ')} — {counts[key]}건")
+            with col_r:
+                if st.button("삭제", key=f"count_del_{key}"):
+                    del counts[key]
+                    store.set("nemotron_count_quotas", counts)
+                    st.rerun()
+        total = sum(counts.values())
+        st.write(f"건수 쿼터 합계: {total}건")
+        if total <= 0:
+            st.error("건수 쿼터 셀을 1개 이상 추가해 주세요.")
+            valid = False
+        st.caption("합계가 생성 인원과 다르면 생성 시 경고가 기록되고, 부족분은 "
+                   "발췌본 분포대로 채우거나 가장 큰 셀부터 줄여 맞춥니다. "
+                   "생성 인원은 생성 단계에서 정합니다.")
+        if level == "province":
+            st.caption("시도 단위 셀 부족 시 권역으로 완화합니다. 예: 제주 70대 "
+                       "여성은 발췌본에 11건뿐이라 강원·제주 권역에서 채우고 "
+                       "완화 기록을 남깁니다.")
+    else:
+        dims = {"연령대": [label for label, _, _ in AGE_BANDS],
+                "성별": ["여성", "남성"],
+                "지역": region_cats}
+        for dim, cats in dims.items():
+            with st.container(border=True):
+                st.subheader(dim)
+                dim_quota = quotas.setdefault(dim, {})
+                cols = st.columns(max(1, len(cats)))
+                for i, cat in enumerate(cats):
+                    with cols[i % len(cols)]:
+                        v = st.number_input(
+                            cat, min_value=0.0, max_value=100.0,
+                            value=float(dim_quota.get(cat, 0.0)),
+                            step=1.0, key=f"nemotron_pct_{dim}_{cat}",
+                        )
+                        dim_quota[cat] = v
+                store.set("nemotron_quotas", quotas)
+                total = sum(dim_quota.get(c, 0.0) for c in cats)
+                if abs(total - 100.0) > 0.01:
+                    st.error(f"합계가 100%가 아닙니다 (현재 {total:.1f}%).")
+                    valid = False
+                else:
+                    st.success("합계 100% 확인")
     if st.button("쿼터 초기화 (발췌본 분포대로)"):
-        store.set("nemotron_quotas", nemotron_default_quotas(records))
+        store.set("nemotron_quotas",
+                  nemotron_default_quotas(records, region_level=level))
+        store.set("nemotron_count_quotas", None)
         st.rerun()
+
+    # (d) 측면 선택 (조사 주제별)
+    facets = st.multiselect(
+        "프롬프트에 쓸 페르소나 측면 (조사 주제별 선택)",
+        options=list(NEMOTRON_ALL_FACETS),
+        format_func=lambda f: NEMOTRON_FACET_LABELS[f],
+        default=list(store.get("nemotron_facets") or NEMOTRON_FACETS),
+        key="nemotron_facets_select",
+    )
+    store.set("nemotron_facets", facets or None)
+    st.caption("기본값은 요약+직업입니다. 예: 식생활 조사는 식생활·가족을 "
+               "추가하세요. 여행·스포츠·예술은 10,000건 발췌본에 없어 "
+               "지금은 반영되지 않습니다.")
     st.caption(
-        "초기값은 발췌본 분포 그대로입니다. 합계가 100%가 아니면 다음 단계로 "
-        "이동할 수 없습니다. 좁은 셀(예: 제주 70대 이상 여성)은 발췌본에 부족할 "
-        "수 있으며, 이 경우 완화 규칙에 따라 채우고 완화 기록을 결과에 남깁니다."
+        "초기값은 발췌본 분포 그대로입니다. 비율 쿼터는 합계가 100%가 아니면 "
+        "다음 단계로 이동할 수 없습니다. 좁은 셀(예: 제주 70대 이상 여성)은 "
+        "발췌본에 부족할 수 있으며, 이 경우 완화 규칙에 따라 채우고 완화 "
+        "기록을 결과에 남깁니다."
     )
     return valid
 
@@ -1316,6 +1582,11 @@ def step4():
                     use_precision=store.get("use_precision"),
                     persona_source=store.get("persona_source") or "manual",
                     nemotron_quotas=store.get("nemotron_quotas"),
+                    nemotron_count_quotas=(store.get("nemotron_count_quotas")
+                                           if store.get("nemotron_quota_mode") == "count"
+                                           else None),
+                    nemotron_region_level=store.get("nemotron_region_level") or "region",
+                    nemotron_facets=store.get("nemotron_facets"),
                 )
                 store.set("results_df", df)
                 prov = get_provider(provider)
@@ -1387,10 +1658,16 @@ def step5():
     st.dataframe(preview_df, use_container_width=True, height=400)
 
     # 파일럿 진단 리포트 (규칙 기반 — 실제 데이터 통계만 사용, 환각 없음)
-    from core.diagnostics import diagnose
+    from core.diagnostics import diagnose, reference_distribution_from_records
     st.subheader("파일럿 진단 리포트")
     st.caption("실제 응답 데이터에서 계산된 통계에만 근거합니다. 임계값을 넘지 않은 문제는 보고하지 않습니다.")
-    findings = diagnose(df, store.get("questions") or [])
+    panel_ref = None
+    if store.get("persona_source") == "nemotron":
+        try:
+            panel_ref = reference_distribution_from_records(load_nemotron_extract())
+        except ValueError:
+            panel_ref = None  # 발췌본 로드 실패 시 패널 진단은 생략
+    findings = diagnose(df, store.get("questions") or [], panel_reference=panel_ref)
     if not findings:
         st.success("진단 결과: 문제가 발견되지 않았습니다. 설문지가 정상적으로 작동합니다.")
     else:
@@ -1470,12 +1747,73 @@ def step5():
 
 
 # ----------------------------------------------------------------------------
+def _render_workflow_guide():
+    """작업 순서 가이드 (UX 개선 ③). 현재 단계를 체크 표시로 보여준다."""
+    has_project = bool(store.get("project_id"))
+    has_questions = bool(store.get("questions"))
+    has_results = store.get("results_df") is not None
+    saved = _is_current_state_saved()
+    items = [
+        ("1. 프로젝트 만들기", has_project),
+        ("2. 설문·페르소나 설계", has_questions),
+        ("3. 가상 응답 생성", has_results),
+        ("4. 저장", saved),
+    ]
+    line = " → ".join(f"{'✓' if done else '○'} {label}" for label, done in items)
+    st.caption(f"작업 순서: {line}")
+    if has_project and not saved:
+        st.caption("프로젝트를 먼저 만들어야 작업 내용이 저장됩니다. 탭을 닫기 전에 저장 버튼을 눌러주세요.")
+
+
+def _render_save_status():
+    """저장 상태·마지막 저장 시각을 지속 표시 (UX 개선 ②)."""
+    pid = store.get("project_id")
+    if not pid:
+        return
+    if _is_current_state_saved():
+        at = st.session_state.get("_last_saved_at") or ""
+        storage = globals().get("_storage_label", "")
+        suffix = f" · {at}" if at else ""
+        suffix += f" · {storage}" if storage else ""
+        st.caption(f"✅ 저장됨{suffix}")
+    else:
+        st.caption("● 저장되지 않은 변경 있음 — 저장 버튼을 눌러주세요.")
+
+
+def _render_leave_guard():
+    """미저장 변경이 있을 때 탭 닫기·새로고침 전 경고 (UX 개선 ④, 보조 수단).
+    1차 방어선은 단계 이동·생성 완료 시 자동 저장이다."""
+    if not is_code_verified() or not store.get("project_id"):
+        return
+    if _is_current_state_saved():
+        return
+    components.html(
+        """<script>
+        window.parent.addEventListener('beforeunload', function (e) {
+            e.preventDefault();
+            e.returnValue = '';
+        });
+        </script>""",
+        height=0,
+    )
+
+
 def _render_project_panel():
-    # 액세스 코드 입력 전에는 기존 프로젝트 목록을 숨김
+    # 액세스 코드 입력 전에는 프로젝트 목록 대신 안내 카드를 표시 (UX 개선 ①)
     if not is_code_verified():
+        with st.container(border=True, key="project_management_card"):
+            st.markdown("#### 📁 프로젝트 관리")
+            st.info(
+                "🔒 액세스 코드를 확인하면 프로젝트 목록이 나타납니다.\n\n"
+                "왼쪽 사이드바에서 코드를 입력해 주세요."
+            )
+            st.caption("작업 순서: 1. 프로젝트 만들기 → 2. 설문·페르소나 설계 → 3. 가상 응답 생성 → 4. 저장")
         return
     with st.container(border=True, key="project_management_card"):
         st.markdown("#### 📁 프로젝트 관리")
+        _render_workflow_guide()
+        _render_save_status()
+        _render_leave_guard()
         if not SheetsProjectStore.is_configured():
             with st.expander("Google Sheets 연동 설정", expanded=False):
                 st.markdown(SheetsProjectStore.setup_guide())

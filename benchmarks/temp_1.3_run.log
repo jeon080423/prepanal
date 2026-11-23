@@ -1,0 +1,47 @@
+  429 발생 — 30초 대기 후 재시도 (1/6)
+  429 발생 — 60초 대기 후 재시도 (2/6)
+  429 발생 — 90초 대기 후 재시도 (3/6)
+  429 발생 — 30초 대기 후 재시도 (1/6)
+  429 발생 — 60초 대기 후 재시도 (2/6)
+Traceback (most recent call last):
+  File "/home/hatch/workspace/prepanel/benchmarks/run_temperature.py", line 158, in <module>
+    main()
+  File "/home/hatch/workspace/prepanel/benchmarks/run_temperature.py", line 107, in main
+    df = svc.generate_responses(
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/prepanel/core/services.py", line 212, in generate_responses
+    results = strategy.generate(ctx, qs, personas, rng)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/prepanel/core/strategies.py", line 239, in generate
+    raw = cached_generate(ctx, _build_dist_prompt(questions, ptexts))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/prepanel/core/strategies.py", line 73, in cached_generate
+    ctx.cache[key] = ctx.text_generate(prompt)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/prepanel/core/strategies.py", line 60, in text_generate
+    return str(fn(self.provider_id, prompt, self.model))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/prepanel/benchmarks/run_temperature.py", line 89, in rest_generate
+    out = call_gemini_rest(prompt, model, temp)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/prepanel/benchmarks/run_temperature.py", line 61, in call_gemini_rest
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 521, in open
+    response = meth(req, response)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 630, in http_response
+    response = self.parent.error(
+               ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 559, in error
+    return self._call_chain(*args)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 639, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 503: Service Unavailable

@@ -51,6 +51,9 @@ class GenerationContext:
     # nemotron_records는 현재 배치에 샘플링된 Nemotron 레코드 목록.
     persona_source: str = "manual"
     nemotron_records: list[dict] | None = None
+    # Nemotron 측면 선택 (Phase 2): 프롬프트 조건으로 쓸 페르소나 측면.
+    # None이면 기본값(요약+직업). 예: 식생활 조사면 family/culinary 추가.
+    nemotron_facets: tuple[str, ...] | None = None
 
     def text_generate(self, prompt: str) -> str:
         fn = self.generate_fn or providers_mod.generate
@@ -176,7 +179,9 @@ class GenerationStrategy(ABC):
         if ctx.persona_source == "nemotron":
             records = (ctx.nemotron_records if ctx.nemotron_records is not None
                        else personas)
-            return build_persona_texts(records, rng, persona_source="nemotron")
+            return build_persona_texts(
+                records, rng, persona_source="nemotron",
+                facets=ctx.nemotron_facets)
         return build_persona_texts(personas, rng)
 
 

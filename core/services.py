@@ -142,6 +142,9 @@ class GenerationService:
         generate_fn=None,
         persona_source: str = "manual",
         nemotron_quotas: dict | None = None,
+        nemotron_count_quotas: dict | None = None,
+        nemotron_region_level: str = "region",
+        nemotron_facets: tuple[str, ...] | list[str] | None = None,
     ) -> pd.DataFrame:
         """가상 응답 n건을 생성해 DataFrame으로 반환.
 
@@ -168,6 +171,8 @@ class GenerationService:
             cache=cache if cache is not None else {},
             generate_fn=generate_fn,
             persona_source=persona_source,
+            nemotron_facets=(tuple(nemotron_facets)
+                             if nemotron_facets is not None else None),
         )
 
         # Nemotron 모드: 전체 패널을 한 번에 쿼터대로 추출한다
@@ -177,7 +182,9 @@ class GenerationService:
         if persona_source == "nemotron":
             records = load_nemotron_extract()
             nemotron_panel, nemotron_meta = sample_nemotron_personas(
-                records, nemotron_quotas, n, rng)
+                records, nemotron_quotas, n, rng,
+                count_quotas=nemotron_count_quotas,
+                region_level=nemotron_region_level)
             self.last_nemotron_meta = nemotron_meta
         else:
             self.last_nemotron_meta = None
@@ -273,7 +280,7 @@ class GenerationService:
             dev = max((abs(v["actual_pct"] - v["target_pct"])
                        for v in vals.values()), default=0.0)
             max_devs.append(f"{dim} 최대 {dev:.1f}%p")
-        return {
+        meta = {
             "페르소나 출처": PERSONA_SOURCES["nemotron"],
             "Nemotron 발췌본": (
                 f"{NEMOTRON_EXTRACT_VERSION} · "
@@ -283,7 +290,24 @@ class GenerationService:
             "쿼터 편차": " · ".join(max_devs) if max_devs else "-",
             "완화 기록": relax_line,
             "쿼터 정규화": "예" if nemotron_meta.get("normalized") else "아니오",
+            "쿼터 방식": ("건수 쿼터" if nemotron_meta.get("quota_mode") == "count"
+                        else "비율 쿼터"),
+            "지역 단위": ("시도 (17개)" if nemotron_meta.get("region_level") == "province"
+                        else "권역 (5개)"),
         }
+        warning = nemotron_meta.get("count_quota_warning")
+        if warning:
+            meta["건수 쿼터 경고"] = warning
+            if nemotron_meta.get("count_quota_fill"):
+                meta["건수 쿼터 채움"] = (
+                    f"부족분 {nemotron_meta['count_quota_fill']}건을 "
+                    "발췌본 분포대로 채움")
+            truncated = nemotron_meta.get("count_quota_truncated") or []
+            if truncated:
+                meta["건수 쿼터 절단"] = "; ".join(
+                    f"{'|'.join(map(str, t['cell']))} "
+                    f"{t['from']}건→{t['to']}건" for t in truncated[:5])
+        return meta
 
 
 # ----------------------------------------------------------------------------

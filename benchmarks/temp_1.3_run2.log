@@ -1,0 +1,16 @@
+  HTTPError 발생 — 30초 대기 후 재시도 (1/6)
+생성 완료: 200건, 6.0분 소요 (temperature=1.3)
+추출 분포 복원: 200건
+{
+  "mean_error": 0.08833333333333308,
+  "mean_error_n": 3,
+  "sd_ratio": 1.001957033342559,
+  "sd_ratio_n": 4,
+  "vr_synth": 0.0,
+  "vr_real": 0.0,
+  "vr_n": 4,
+  "jsd": 0.01223999224209312,
+  "minority_recall": 1.0,
+  "minority_hits": 19,
+  "minority_total": 19
+}

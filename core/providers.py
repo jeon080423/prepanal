@@ -154,7 +154,14 @@ class AIProvider(ABC):
         return seen
 
     def generate(self, prompt: str, model: str | None = None,
-                 timeout: int = 180) -> str:
+                 timeout: int = 180, temperature: float = 0.7) -> str:
+        """텍스트 생성. temperature는 선택적 인자 (기본값 0.7 = 기존 동작 유지).
+
+        REST 경로(Gemini/Groq)에서는 generationConfig/body에 그대로 실린다.
+        로컬 CLI 경로는 CLI가 temperature를 하드코딩(0.7)하고 있어 이 인자를
+        무시한다 — CLI 경유 온도 실험은 benchmarks/run_temperature.py의
+        REST 직접 호출 방식을 쓴다.
+        """
         model = model or self.default_model
         if self.cli_path and os.path.exists(self.cli_path):
             self.last_used_model = model
@@ -171,7 +178,8 @@ class AIProvider(ABC):
         for key_idx, api_key in enumerate(api_keys):
             for cand in candidates:
                 try:
-                    result = self._call_rest(api_key, prompt, cand, timeout)
+                    result = self._call_rest(api_key, prompt, cand, timeout,
+                                             temperature)
                     self.last_used_model = cand
                     if len(api_keys) > 1:
                         self.last_used_model += f" (키 {key_idx + 1}/{len(api_keys)})"
@@ -207,18 +215,18 @@ class AIProvider(ABC):
 
     @abstractmethod
     def _call_rest(self, api_key: str, prompt: str, model: str,
-                   timeout: int) -> str:
+                   timeout: int, temperature: float = 0.7) -> str:
         """REST 폴백. 각 provider의 응답 파싱만 구현하면 된다."""
         ...
 
 
 class GeminiProvider(AIProvider):
     def _call_rest(self, api_key: str, prompt: str, model: str,
-                   timeout: int = 180) -> str:
+                   timeout: int = 180, temperature: float = 0.7) -> str:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         body = json.dumps({
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.7},
+            "generationConfig": {"temperature": temperature},
         }).encode("utf-8")
         req = urllib.request.Request(
             url, data=body,
@@ -244,12 +252,12 @@ class GroqProvider(AIProvider):
     """Groq API (OpenAI 호환). 무료 티어 제공."""
 
     def _call_rest(self, api_key: str, prompt: str, model: str,
-                   timeout: int = 180) -> str:
+                   timeout: int = 180, temperature: float = 0.7) -> str:
         url = "https://api.groq.com/openai/v1/chat/completions"
         body = json.dumps({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7,
+            "temperature": temperature,
         }).encode("utf-8")
         req = urllib.request.Request(
             url, data=body,
@@ -319,15 +327,18 @@ _build_default_registry()
 
 # -- 하위 호환 진입점 (호출부는 레지스트리로 위임, 이름 분기 없음) -------------
 def generate(provider_id: str, prompt: str, model: str | None = None,
-             timeout: int = 180) -> str:
+             timeout: int = 180, temperature: float = 0.7) -> str:
     """선택된 AI provider로 텍스트 생성. API 키 하드코딩 없음.
+
+    temperature는 선택적 인자 (기본값 0.7 = 기존 동작 유지). 로컬 CLI 경로는
+    CLI가 temperature를 하드코딩하고 있어 무시된다.
 
     요청한 provider가 할당량 초과(429)/과부하(503)/타임아웃으로 실패하면
     자동으로 다른 provider로 전환한다. 인증 오류(API 키 없음 등)는 전환하지 않는다.
     """
     provider = get_provider(provider_id)
     try:
-        return provider.generate(prompt, model, timeout)
+        return provider.generate(prompt, model, timeout, temperature)
     except RuntimeError as e:
         err = str(e).lower()
         # 전환 대상 오류가 아니면 그대로 전파
@@ -341,7 +352,7 @@ def generate(provider_id: str, prompt: str, model: str | None = None,
                 continue
             try:
                 other = get_provider(other_id)
-                result = other.generate(prompt, None, timeout)
+                result = other.generate(prompt, None, timeout, temperature)
                 # 실제 사용된 provider 추적
                 provider.last_used_model = (
                     f"{other.label} ({other.last_used_model}) [자동 전환]"

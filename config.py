@@ -49,6 +49,33 @@ NEMOTRON_SOURCE_URL = (
 )
 NEMOTRON_LICENSE = "CC BY 4.0"
 NEMOTRON_FACETS = ("persona", "professional_persona")
+# Phase 2 — 측면 선택: 조사 주제별로 쓸 페르소나 측면 (설계안 §7.3).
+# 전체 7종 중 10,000건 발췌본에 들어 있는 것은 4종이다.
+# travel/sports/arts는 원본 스키마에는 있으나 발췌본 컬럼이 없어,
+# 선택해도 텍스트에 포함되지 않는다 (발췌본 확대 시 자동 활성화).
+NEMOTRON_ALL_FACETS = (
+    "persona", "professional_persona", "family_persona", "culinary_persona",
+    "travel_persona", "sports_persona", "arts_persona",
+)
+NEMOTRON_AVAILABLE_FACETS = (
+    "persona", "professional_persona", "family_persona", "culinary_persona",
+)
+NEMOTRON_FACET_LABELS = {
+    "persona": "요약",
+    "professional_persona": "직업",
+    "family_persona": "가족",
+    "culinary_persona": "식생활",
+    "travel_persona": "여행",
+    "sports_persona": "스포츠",
+    "arts_persona": "예술",
+}
+# 시도 단위 쿼터(Phase 2): 발췌본의 시도 값 목록 (정렬됨).
+NEMOTRON_PROVINCES = (
+    "강원", "경기", "경상남", "경상북", "광주", "대구", "대전", "부산",
+    "서울", "세종", "울산", "인천", "전라남", "전북", "제주", "충청남", "충청북",
+)
+# 패널-모집단 비교 진단 임계값 (설계안 §10): ±5%p 이상 차이나는 셀을 보고한다.
+PANEL_POPULATION_DIFF_THRESHOLD_PP = 5.0
 # 1인당 프롬프트 프로필 텍스트 상한 (실측: 1인 합성 평균 287자, 최대 430자)
 NEMOTRON_TEXT_MAX_CHARS = 550
 
