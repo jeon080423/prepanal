@@ -46,7 +46,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon="",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -409,15 +409,15 @@ def _metrix_ci_b64() -> str:
     return ""
 
 
-# 사이드바 전체를 CI 배경(검정)과 동일하게 + 텍스트 가시성 확보
+# 사이드바 밝은 회색 배경(#F2F2F0, 테마 secondary 배경색) + 어두운 텍스트
 st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #000000 0%, #1C1C1E 60%, #2C2C2E 100%);
+        background: #F2F2F0;
     }
     [data-testid="stSidebar"] * {
-        color: #FFFFFF !important;
+        color: #232323 !important;
     }
     /* 사이드바 알림 박스(success/warning/info/error)는 밝은 배경이라 글씨를 검정으로 */
     [data-testid="stSidebar"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] *,
@@ -425,24 +425,37 @@ st.markdown(
         color: #1e293b !important;
     }
     [data-testid="stSidebar"] .stCaption {
-        color: #CCCCCC !important;
+        color: #6B7280 !important;
     }
     [data-testid="stSidebar"] input {
-        background-color: #1A1A1A !important;
-        color: #FFFFFF !important;
-        border: 1px solid #444444 !important;
+        background-color: #FFFFFF !important;
+        color: #232323 !important;
+        border: 1px solid #D1D1D6 !important;
     }
     [data-testid="stSidebar"] button {
-        background-color: #1A1A1A !important;
-        color: #FFFFFF !important;
-        border: 1px solid #555555 !important;
+        background-color: #FFFFFF !important;
+        color: #232323 !important;
+        border: 1px solid #D1D1D6 !important;
     }
     [data-testid="stSidebar"] button:hover {
-        background-color: #3A3A3C !important;
-        border-color: #6E6E73 !important;
+        background-color: #E8E8E3 !important;
+        border-color: #9CA3AF !important;
+    }
+    /* 현재 프로젝트 버튼(primary): 차콜 배경 + 흰 텍스트 */
+    [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
+        background-color: #36454F !important;
+        color: #FFFFFF !important;
+        border-color: #36454F !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] * {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:hover {
+        background-color: #2A3742 !important;
+        border-color: #2A3742 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="radio"] div {
-        color: #FFFFFF !important;
+        color: #232323 !important;
     }
     /* 선택된 라디오 버튼 강조색: 밝은 파랑 */
     [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child {
@@ -454,29 +467,29 @@ st.markdown(
     }
     /* 포커스 강조색: 차콜 */
     [data-testid="stSidebar"] input:focus {
-        border-color: #8E8E93 !important;
-        box-shadow: 0 0 0 1px #8E8E93 !important;
+        border-color: #36454F !important;
+        box-shadow: 0 0 0 1px #36454F !important;
     }
     [data-testid="stSidebar"] .stExpander {
-        background-color: rgba(28, 28, 30, 0.7) !important;
-        border: 1px solid #3A3A3C !important;
+        background-color: #FFFFFF !important;
+        border: 1px solid #D1D1D6 !important;
     }
     [data-testid="stSidebar"] details {
-        background-color: rgba(28, 28, 30, 0.7) !important;
+        background-color: #FFFFFF !important;
     }
     [data-testid="stSidebar"] details summary {
         background-color: transparent !important;
-        color: #FFFFFF !important;
+        color: #232323 !important;
     }
     [data-testid="stSidebar"] details summary:hover {
-        background-color: #2C2C2E !important;
+        background-color: #E8E8E3 !important;
     }
     [data-testid="stSidebar"] hr {
-        border-color: #3A3A3C !important;
+        border-color: #D1D1D6 !important;
     }
     [data-testid="stSidebar"] details summary svg {
-        fill: #FFFFFF !important;
-        color: #FFFFFF !important;
+        fill: #232323 !important;
+        color: #232323 !important;
     }
     [data-testid="stSidebar"] input::placeholder {
         color: #888888 !important;
@@ -525,15 +538,15 @@ st.markdown(
     }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] label {
-        color: #FFFFFF !important;
+        color: #232323 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="select"] > div {
-        background-color: #1A1A1A !important;
-        color: #FFFFFF !important;
-        border-color: #444444 !important;
+        background-color: #FFFFFF !important;
+        color: #232323 !important;
+        border-color: #D1D1D6 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="select"] span {
-        color: #FFFFFF !important;
+        color: #232323 !important;
     }
     /* AI 제공자 선택칸과 화살표: 흰 배경 + 검정 표시 */
     [data-testid="stSidebar"] .st-key-provider_select [data-baseweb="select"] > div,
@@ -622,13 +635,13 @@ st.markdown(
         text-align: left !important;
         font-size: 15px !important;
         font-weight: 600 !important;
-        color: #FFFFFF !important;
+        color: #232323 !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_complete_"] button::before {
-        color: #4ADE80 !important;
+        color: #16A34A !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_current_"] button::before {
-        color: #60A5FA !important;
+        color: #2563EB !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_upcoming_"] button::before {
         color: #6B7280 !important;
@@ -637,7 +650,7 @@ st.markdown(
         background: rgba(96, 165, 250, 0.15) !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_"] button:hover {
-        background: rgba(255, 255, 255, 0.08) !important;
+        background: rgba(0, 0, 0, 0.06) !important;
     }
     /* 결과 요약: 긴 날짜와 모델 이름도 생략 없이 표시 */
     .st-key-results_summary [data-testid="stMarkdownContainer"] p {
@@ -1067,10 +1080,75 @@ def _render_ai_settings():
         st.caption(f"인터뷰 트랜스크립트 {n_t}건")
 
 
+@st.dialog("📁 프로젝트 관리", width="large")
+def project_management_dialog():
+    """프로젝트 관리 다이얼로그 — _render_project_management() 본문 재사용."""
+    _render_project_management()
+
+
+@st.dialog("⚙️ AI 설정", width="large")
+def ai_settings_dialog():
+    """AI 설정 다이얼로그 — _render_ai_settings() 본문 재사용."""
+    _render_ai_settings()
+
+
+def _render_sidebar():
+    """좌측 패널 (Qualtrics '프로젝트 폴더' 카피) — 귀하의 폴더 + 새 프로젝트.
+
+    없는 기능(별표 표시·공유)은 UI에 흔적도 남기지 않는다.
+    접기는 네이티브 사이드바 접기 컨트롤(<<)을 쓴다.
+    메뉴(프로젝트 관리·AI 설정·이론·업데이트·로그아웃)는 상단 헤더로 이동했다.
+    """
+    with st.sidebar:
+        st.subheader("프로젝트 폴더")
+        with st.expander("📁 귀하의 폴더", expanded=True):
+            if projects:
+                for p in projects:
+                    is_current = p["id"] == current_pid
+                    label = ("● " if is_current else "") + p["name"]
+                    if st.button(
+                        label,
+                        key=f"sidebar_proj_{p['id']}",
+                        use_container_width=True,
+                        type="primary" if is_current else "secondary",
+                    ):
+                        if not is_current:
+                            _save_current_project()
+                            _load_project_to_store(p["id"])
+                            st.rerun()
+            else:
+                st.caption("프로젝트가 없습니다.")
+        if st.button("＋ 새 프로젝트", key="btn_sidebar_new_project", use_container_width=True):
+            # 이름 입력 없이 한 번에 생성한다. "새 프로젝트"가 이미 있으면
+            # 날짜를 붙여 고유한 이름을 만든다 (기존 폼은 이름 중복 시 오류).
+            existing_names = {
+                p["name"].strip().casefold()
+                for p in _project_store.list_projects()
+            }
+            new_name = "새 프로젝트"
+            if new_name.casefold() in existing_names:
+                new_name = f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}"
+                suffix = 2
+                while new_name.casefold() in existing_names:
+                    new_name = (
+                        f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}-{suffix}"
+                    )
+                    suffix += 1
+            new_pid = _project_store.create_project(new_name)
+            _save_current_project()
+            _load_project_to_store(new_pid)
+            st.rerun()
+
+
 def _render_header():
-    """상단 헤더 — 로고·제목, 프로젝트 선택, 저장, 프로젝트 관리, AI 설정, 로그아웃."""
-    c_logo, c_proj, c_save, c_mgmt, c_ai, c_out = st.columns(
-        [2.6, 2.0, 0.6, 1.1, 0.9, 0.8], vertical_alignment="center"
+    """상단 헤더 (Qualtrics 카피) — 로고 + 주 메뉴 팝오버 + 저장 + 도움말 + 내 계정.
+
+    주 메뉴: 5개 단계(스테퍼와 같은 goto 이동) + 프로젝트 관리 + 업데이트 기록.
+    내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
+    알림 종·전환기는 해당 기능이 없어 넣지 않는다.
+    """
+    c_logo, c_menu, c_save, c_help, c_account = st.columns(
+        [5.0, 1.0, 0.7, 0.4, 1.3], vertical_alignment="center"
     )
     with c_logo:
         st.markdown(
@@ -1082,55 +1160,42 @@ def _render_header():
             "Synthetic Respondent Pre-Test</div>",
             unsafe_allow_html=True,
         )
-    with c_proj:
-        if projects:
-            proj_options = [p["id"] for p in projects]
-            proj_names = {p["id"]: p["name"] for p in projects}
-            try:
-                default_idx = proj_options.index(current_pid)
-            except ValueError:
-                default_idx = 0
-            selected_pid = st.selectbox(
-                "프로젝트 선택",
-                options=proj_options,
-                format_func=lambda pid: proj_names.get(pid, pid),
-                index=default_idx,
-                key="project_selector",
-                label_visibility="collapsed",
-            )
-            if selected_pid != current_pid:
-                _save_current_project()
-                _load_project_to_store(selected_pid)
-                st.rerun()
-        else:
-            st.caption("프로젝트가 없습니다.")
+    with c_menu:
+        with st.popover("☰ 주 메뉴", use_container_width=True):
+            current_step = store.get("step")
+            for step_number, step_name in enumerate(STEPS, start=1):
+                mark = "✓ " if step_number < current_step else ""
+                if st.button(
+                    f"{mark}{step_number}. {step_name}",
+                    key=f"mainmenu_step_{step_number}",
+                    use_container_width=True,
+                    type="primary" if step_number == current_step else "secondary",
+                ):
+                    goto(step_number)
+            st.divider()
+            if st.button("📁 프로젝트 관리", key="btn_mainmenu_project_mgmt", use_container_width=True):
+                project_management_dialog()
+            if st.button("업데이트 기록", key="btn_mainmenu_update_log", use_container_width=True):
+                update_log_dialog()
     with c_save:
         if st.button("💾 저장", key="btn_save_project", use_container_width=True):
             _save_current_project()
             st.success("저장되었습니다.")
-    with c_mgmt:
-        with st.popover("📁 프로젝트 관리"):
-            _render_project_management()
-    with c_ai:
-        with st.popover("⚙️ AI 설정"):
-            _render_ai_settings()
-    with c_out:
-        if st.button("로그아웃", key="btn_logout", use_container_width=True):
-            st.session_state["access_granted"] = False
-            store.set("project_id", None)
-            st.rerun()
-    # 2행: 작업 순서 가이드 + 저장 상태 + 이론·업데이트 링크
+    with c_help:
+        if st.button("?", key="btn_help_theory", use_container_width=True, help="이론적 배경"):
+            theory_dialog()
+    with c_account:
+        with st.popover("👤 내 계정", use_container_width=True):
+            st.caption("🔓 액세스 코드 확인됨")
+            if st.button("⚙️ AI 설정", key="btn_account_ai_settings", use_container_width=True):
+                ai_settings_dialog()
+            if st.button("로그아웃", key="btn_account_logout", use_container_width=True):
+                st.session_state["access_granted"] = False
+                store.set("project_id", None)
+                st.rerun()
+    # 2행: 작업 순서 가이드 + 저장 상태
     _render_workflow_guide()
     _render_save_status()
-    c_theory, c_log, c_code = st.columns([1, 1, 4])
-    with c_theory:
-        if st.button("📖 이론적 배경", key="theory_bg_header"):
-            theory_dialog()
-    with c_log:
-        if st.button("업데이트 기록", key="update_log_header"):
-            update_log_dialog()
-    with c_code:
-        st.caption("🔓 액세스 코드 확인됨")
 
 
 def _render_stepper():
@@ -2023,6 +2088,7 @@ if not is_code_verified():
     _render_landing()
     st.stop()
 
+_render_sidebar()
 _render_header()
 _render_stepper()
 _render_leave_guard()
