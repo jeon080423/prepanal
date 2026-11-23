@@ -46,7 +46,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon="",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown(
@@ -653,202 +653,352 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.sidebar:
-    # 메트릭스 CI (사이드바가 이미 검정이므로 로고만 표시)
-    st.markdown(
-        """
-        <div style="padding: 12px 16px 28px 16px; text-align: center;">
-            <img src="data:image/png;base64,{logo_b64}"
-                 style="height: 36px; vertical-align: middle;" alt="MetriX CI">
-        </div>
-        """.format(logo_b64=_metrix_ci_b64()),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<div style="color: #FFFFFF; font-size: 19px; font-weight: 700; '
-        f'white-space: nowrap; margin-bottom: 0.75rem;">{APP_TITLE}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<p style="color: #FFFFFF !important; font-size: 0.875rem; margin-top: -0.5rem;">'
-        'Synthetic Respondent Pre-Test</p>',
-        unsafe_allow_html=True,
-    )
-
-    # 액세스 코드 입력 (사이드바)
-    if is_code_verified():
-        st.success("🔓 액세스 코드 확인됨")
-    else:
-        with st.expander("🔒 액세스 코드 입력", expanded=True):
-            code_input = st.text_input(
-                "액세스 코드", type="password", key="sidebar_code_input",
-                label_visibility="collapsed", placeholder="액세스 코드",
-            )
-            if st.button("코드 확인", key="sidebar_code_btn"):
-                ok, msg = verify_access_code(code_input)
-                if ok:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
-        st.caption("💡 코드를 확인하면 📁 프로젝트 관리가 나타납니다.")
-
-    # 프로젝트 관리 (Google Sheets 우선, 실패 시 로컬 파일로 폴백)
-    _storage_label = "💻 로컬 (리부트 시 삭제됨)"
-    _project_store = ProjectStore()
-    if SheetsProjectStore.is_configured():
-        try:
-            _sheets_store = SheetsProjectStore()
-            # 실제 연결 테스트 (권한 문제 등을 조기에 감지)
-            _sheets_store.list_projects()
-            _project_store = _sheets_store
-            _storage_label = "☁️ Google Sheets"
-        except Exception as e:
-            # Sheets 연결 실패 시 로컬로 폴백하고 경고 표시
-            import streamlit as st
+# ----------------------------------------------------------------------------
+# 레이아웃 개편 (2026-11-23, 이사님 결정)
+# - 사이드바 제거 → 상단 헤더 + 1~5단계 진행 표시 + 5개 섹션을 한 페이지에 쌓기 (A안)
+# - 첫 화면은 인덱스 랜딩페이지, 로그인하면 앱이 나오는 Qualtrics 방식
+# - 색상: 차콜 그레이 톤 (primary #36454F, 테마는 .streamlit/config.toml 참조)
+# 이 파일은 app.py에 합치는 조각(splice)용이다. 직접 실행하지 않는다.
+# ----------------------------------------------------------------------------
+# 프로젝트 저장소 설정 (기존 사이드바에서 이동)
+# ----------------------------------------------------------------------------
+_storage_label = "💻 로컬 (리부트 시 삭제됨)"
+_project_store = ProjectStore()
+if SheetsProjectStore.is_configured():
+    try:
+        _sheets_store = SheetsProjectStore()
+        # 실제 연결 테스트 (권한 문제 등을 조기에 감지)
+        _sheets_store.list_projects()
+        _project_store = _sheets_store
+        _storage_label = "☁️ Google Sheets"
+    except Exception as e:
+        # Sheets 연결 실패 시 로컬로 폴백하고 경고 표시
+        # 로그인 전 랜딩에서는 경고를 숨기고, 로그인 후에만 표시한다.
+        if is_code_verified():
             st.warning(
                 f"⚠️ Google Sheets 연결 실패로 로컬 저장소를 사용합니다. "
                 f"({str(e)[:100]})"
             )
 
-    def _save_current_project():
-        pid = store.get("project_id")
-        if not pid:
-            return
-        state = {k: store.get(k) for k in PROJECT_STATE_KEYS}
-        # 모델 선택도 저장
-        prov_id = store.get("provider")
-        state["model_select"] = store.get(f"model_select_{prov_id}")
-        _project_store.save_project(pid, state)
-        # 저장 상태 기록 (지속 표시·dirty 판정용)
-        st.session_state["_last_saved_pid"] = pid
-        st.session_state["_last_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        st.session_state["_last_saved_fp"] = _state_fingerprint(state)
 
-    def _load_project_to_store(pid: str):
-        state = _project_store.load_project(pid)
-        # 기존 상태 초기화 후 불러오기 (없는 키는 기본값)
-        defaults = {
-            "questions": [],
-            "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
-            "persona_source": "manual",
-            "nemotron_quotas": None,
-            "nemotron_quota_mode": "ratio",
-            "nemotron_count_quotas": None,
-            "nemotron_region_level": "region",
-            "nemotron_facets": None,
-            "transcripts": [],
-            "use_precision": False,
-            "learned": None,
-            "learned_file": None,
-            "results_df": None,
-            "gen_meta": None,
-            "provider": "gemini",
-        }
-        for k in PROJECT_STATE_KEYS:
-            v = state.get(k)
-            store.set(k, v if v is not None else defaults.get(k))
-        # 모델 선택 복원
-        prov_id = state.get("provider", "gemini")
-        store.set("provider", prov_id)
-        if state.get("model_select"):
-            store.set(f"model_select_{prov_id}", state["model_select"])
-        store.set("project_id", pid)
-        store.set("step", 1)
-        # 결과 관련 캐시 초기화
-        store.set("gen_cache", {})
-        # 불러온 상태는 저장된 상태와 동일하므로 저장 지점을 기록
-        st.session_state["_last_saved_pid"] = pid
-        try:
-            st.session_state["_last_saved_fp"] = _state_fingerprint(
-                _current_state_snapshot()
-            )
-        except Exception:
-            st.session_state["_last_saved_fp"] = ""
-        try:
-            st.session_state["_last_saved_at"] = (
-                _project_store.get_meta(pid).get("updated_at", "")
-            )
-        except Exception:
-            st.session_state["_last_saved_at"] = ""
+def _save_current_project():
+    pid = store.get("project_id")
+    if not pid:
+        return
+    state = {k: store.get(k) for k in PROJECT_STATE_KEYS}
+    # 모델 선택도 저장
+    prov_id = store.get("provider")
+    state["model_select"] = store.get(f"model_select_{prov_id}")
+    _project_store.save_project(pid, state)
+    # 저장 상태 기록 (지속 표시·dirty 판정용)
+    st.session_state["_last_saved_pid"] = pid
+    st.session_state["_last_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    st.session_state["_last_saved_fp"] = _state_fingerprint(state)
 
-    # 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
-    # 단, 액세스 코드 입력 전/직후에는 기존 작업을 불러오지 않고 기본 페이지로 시작
-    projects = _project_store.list_projects()
-    current_pid = store.get("project_id")
-    project_ids = [p["id"] for p in projects]
-    if st.session_state.pop("_fresh_after_verify", False):
-        # 코드 입력 직후: 빈 새 프로젝트를 생성해 기본 페이지로 시작
-        # 같은 이름이 이미 있으면 기존 것을 재사용 (중복 생성 방지)
-        try:
-            new_pid = _project_store.create_project("새 프로젝트")
-        except ValueError:
-            existing = [p for p in projects if p.get("name") == "새 프로젝트"]
-            new_pid = existing[0]["id"] if existing else project_ids[0] if project_ids else None
-            if new_pid is None:
-                # 프로젝트가 하나도 없으면 타임스탬프로 고유 이름 생성
-                from datetime import datetime
-                new_pid = _project_store.create_project(
-                    f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}"
-                )
-        store.set("project_id", new_pid)
-        store.set("questions", [])
-        store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
-        store.set("persona_source", "manual")
-        store.set("nemotron_quotas", None)
-        store.set("nemotron_quota_mode", "ratio")
-        store.set("nemotron_count_quotas", None)
-        store.set("nemotron_region_level", "region")
-        store.set("nemotron_facets", None)
-        store.set("transcripts", [])
-        store.set("use_precision", False)
-        store.set("learned", None)
-        store.set("learned_file", None)
-        store.set("results_df", None)
-        store.set("gen_meta", None)
-        store.set("gen_cache", {})
-        store.set("step", 1)
-        projects = _project_store.list_projects()
-        current_pid = new_pid
-    elif not is_code_verified():
-        # 코드 입력 전: 기존 작업을 불러오지 않음
-        current_pid = None
-        store.set("project_id", None)
-    elif projects and current_pid not in project_ids:
-        current_pid = projects[0]["id"]
-        _load_project_to_store(current_pid)
-    elif not projects:
-        current_pid = None
-        store.set("project_id", None)
-    st.divider()
 
-    current_step = store.get("step")
-    for step_number, step_name in enumerate(STEPS, start=1):
-        status = (
-            "complete" if step_number < current_step
-            else "current" if step_number == current_step
-            else "upcoming"
+def _load_project_to_store(pid: str):
+    state = _project_store.load_project(pid)
+    # 기존 상태 초기화 후 불러오기 (없는 키는 기본값)
+    defaults = {
+        "questions": [],
+        "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
+        "persona_source": "manual",
+        "nemotron_quotas": None,
+        "nemotron_quota_mode": "ratio",
+        "nemotron_count_quotas": None,
+        "nemotron_region_level": "region",
+        "nemotron_facets": None,
+        "transcripts": [],
+        "use_precision": False,
+        "learned": None,
+        "learned_file": None,
+        "results_df": None,
+        "gen_meta": None,
+        "provider": "gemini",
+    }
+    for k in PROJECT_STATE_KEYS:
+        v = state.get(k)
+        store.set(k, v if v is not None else defaults.get(k))
+    # 모델 선택 복원
+    prov_id = state.get("provider", "gemini")
+    store.set("provider", prov_id)
+    if state.get("model_select"):
+        store.set(f"model_select_{prov_id}", state["model_select"])
+    store.set("project_id", pid)
+    store.set("step", 1)
+    # 결과 관련 캐시 초기화
+    store.set("gen_cache", {})
+    # 불러온 상태는 저장된 상태와 동일하므로 저장 지점을 기록
+    st.session_state["_last_saved_pid"] = pid
+    try:
+        st.session_state["_last_saved_fp"] = _state_fingerprint(
+            _current_state_snapshot()
         )
+    except Exception:
+        st.session_state["_last_saved_fp"] = ""
+    try:
+        st.session_state["_last_saved_at"] = (
+            _project_store.get_meta(pid).get("updated_at", "")
+        )
+    except Exception:
+        st.session_state["_last_saved_at"] = ""
+
+
+# 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
+# 단, 액세스 코드 입력 전/직후에는 기존 작업을 불러오지 않고 기본 페이지로 시작
+projects = _project_store.list_projects()
+current_pid = store.get("project_id")
+project_ids = [p["id"] for p in projects]
+if st.session_state.pop("_fresh_after_verify", False):
+    # 코드 입력 직후: 빈 새 프로젝트를 생성해 기본 페이지로 시작
+    # 같은 이름이 이미 있으면 기존 것을 재사용 (중복 생성 방지)
+    try:
+        new_pid = _project_store.create_project("새 프로젝트")
+    except ValueError:
+        existing = [p for p in projects if p.get("name") == "새 프로젝트"]
+        new_pid = existing[0]["id"] if existing else project_ids[0] if project_ids else None
+        if new_pid is None:
+            # 프로젝트가 하나도 없으면 타임스탬프로 고유 이름 생성
+            from datetime import datetime
+            new_pid = _project_store.create_project(
+                f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}"
+            )
+    store.set("project_id", new_pid)
+    store.set("questions", [])
+    store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+    store.set("persona_source", "manual")
+    store.set("nemotron_quotas", None)
+    store.set("nemotron_quota_mode", "ratio")
+    store.set("nemotron_count_quotas", None)
+    store.set("nemotron_region_level", "region")
+    store.set("nemotron_facets", None)
+    store.set("transcripts", [])
+    store.set("use_precision", False)
+    store.set("learned", None)
+    store.set("learned_file", None)
+    store.set("results_df", None)
+    store.set("gen_meta", None)
+    store.set("gen_cache", {})
+    store.set("step", 1)
+    projects = _project_store.list_projects()
+    current_pid = new_pid
+elif not is_code_verified():
+    # 코드 입력 전: 기존 작업을 불러오지 않음
+    current_pid = None
+    store.set("project_id", None)
+elif projects and current_pid not in project_ids:
+    current_pid = projects[0]["id"]
+    _load_project_to_store(current_pid)
+elif not projects:
+    current_pid = None
+    store.set("project_id", None)
+
+
+# 액세스 코드 입력란이 흰 배경에 묻히지 않도록 검정색을 명시한다.
+st.markdown(
+    """
+    <style>
+    div[data-testid="stTextInput"] input[type="password"] {
+        background-color: white !important;
+    }
+    input[type="password"][placeholder="액세스 코드"] {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        caret-color: #000000 !important;
+        opacity: 1 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+@st.dialog("PrePanel에 로그인")
+def login_dialog():
+    st.caption("액세스 코드를 입력하면 앱으로 이동합니다.")
+    code_input = st.text_input(
+        "액세스 코드", type="password", key="login_code_input",
+        label_visibility="collapsed", placeholder="액세스 코드",
+    )
+    if st.button("로그인", type="primary", use_container_width=True, key="login_btn"):
+        ok, msg = verify_access_code(code_input)
+        if ok:
+            st.rerun()
+        else:
+            st.error(msg)
+    st.caption("액세스 코드는 관리자에게 문의하세요.")
+
+
+def _render_landing():
+    """첫 화면 — 인덱스 랜딩페이지 (Qualtrics 방식). 로그인 전에는 앱 대신 이 화면을 보여준다."""
+    nav_logo, nav_login, nav_start = st.columns(
+        [5, 1, 1.6], vertical_alignment="center"
+    )
+    with nav_logo:
+        st.markdown(
+            '<div style="display:flex; align-items:baseline; gap:18px;">'
+            '<span style="font-size:22px; font-weight:800; color:#36454F; letter-spacing:-0.02em;">MetriX</span>'
+            '<span style="font-size:14px; color:#5b6b7a;">제품&nbsp;&nbsp;기능&nbsp;&nbsp;요금제&nbsp;&nbsp;문의</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_login:
+        if st.button("로그인", key="landing_login_btn", use_container_width=True):
+            login_dialog()
+    with nav_start:
         if st.button(
-            f"{step_number}. {step_name}",
-            key=f"step_nav_{status}_{step_number}",
+            "무료로 시작하기", type="primary", key="landing_start_btn",
             use_container_width=True,
-            help="현재 단계" if status == "current" else f"{step_name} 단계로 이동",
         ):
-            goto(step_number)
-
+            login_dialog()
     st.divider()
-    st.subheader("이론적 배경")
-    # 맨 아래 기존 버튼과 라벨이 같으므로 key 필수 (DuplicateWidgetID 방지)
-    if st.button("📖 이론적 배경", use_container_width=True, key="theory_bg_sidebar_top"):
-        theory_dialog()
-    if st.button("업데이트 기록", use_container_width=True, key="update_log_sidebar"):
-        update_log_dialog()
-
+    # 히어로
+    st.markdown(
+        '<div style="text-align:center; padding: 1.6rem 0 0.4rem;">'
+        '<div style="font-size:13px; font-weight:700; letter-spacing:0.08em; color:#36454F;">'
+        "AI 합성응답자 기반 사전테스트</div>"
+        '<div style="font-size:2.1rem; font-weight:800; line-height:1.25; letter-spacing:-0.02em; margin-top:0.7rem;">'
+        "설문을 배포하기 전에,<br>응답을 미리 봅니다.</div>"
+        '<div style="font-size:1.02rem; line-height:1.65; color:#5b6b7a; max-width:560px; margin:0.9rem auto 0;">'
+        "실제 응답자를 기다리지 마세요. 10,000명의 가상 페르소나가 설문을 미리 답하고, "
+        "문제 문항을 배포 전에 찾아냅니다.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _cta_l, _cta_c, _cta_r = st.columns([1, 1, 1])
+    with _cta_c:
+        if st.button(
+            "무료로 시작하기", type="primary", key="landing_hero_btn",
+            use_container_width=True,
+        ):
+            login_dialog()
+    st.markdown(
+        '<div style="text-align:center; font-size:12px; color:#5b6b7a; margin-top:0.4rem;">'
+        "신용카드 필요 없음 · 첫 프로젝트 무료</div>",
+        unsafe_allow_html=True,
+    )
+    # 앱 미리보기 카드
+    with st.container(border=True):
+        st.caption("PrePanel 앱 미리보기")
+        st.markdown(
+            "1. 설문 설계 ✓ &nbsp;·&nbsp; 2. 페르소나 설계 ✓ &nbsp;·&nbsp; 3. 분포 학습",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div style="height:8px; border-radius:99px; background:#ececea; overflow:hidden;">'
+            '<div style="height:100%; width:62%; background:#36454F; border-radius:99px;"></div></div>'
+            '<div style="height:8px; border-radius:99px; background:#ececea; overflow:hidden; margin-top:6px;">'
+            '<div style="height:100%; width:44%; background:#7d8a96; border-radius:99px;"></div></div>',
+            unsafe_allow_html=True,
+        )
+        st.caption("가상 응답 200건 생성 중… 65%")
+    # 수치 스트립
+    _s1, _s2, _s3, _s4 = st.columns(4)
+    for _col, _num, _label in [
+        (_s1, "10,000건", "가상 페르소나"),
+        (_s2, "0.44%p", "분포 오차 최대"),
+        (_s3, "5단계", "설계부터 결과까지"),
+        (_s4, "CC BY 4.0", "Nemotron-Personas-Korea"),
+    ]:
+        with _col:
+            st.markdown(
+                f'<div style="text-align:center; padding:0.8rem 0;">'
+                f'<div style="font-size:1.35rem; font-weight:800; color:#36454F;">{_num}</div>'
+                f'<div style="font-size:12px; color:#5b6b7a;">{_label}</div></div>',
+                unsafe_allow_html=True,
+            )
+    # 기능 3단
+    _f1, _f2, _f3 = st.columns(3)
+    with _f1:
+        with st.container(border=True):
+            st.markdown("**설문 설계**")
+            st.caption("PDF·HWPX·DOCX 설문지를 올리면 AI가 문항과 보기를 자동 인식합니다.")
+    with _f2:
+        with st.container(border=True):
+            st.markdown("**가상 응답 생성**")
+            st.caption("인구통계 분포대로 가상 응답자를 뽑아 LLM이 실제처럼 답합니다.")
+    with _f3:
+        with st.container(border=True):
+            st.markdown("**파일럿 진단**")
+            st.caption("문제 문항과 분포 이상을 배포 전에 리포트로 확인합니다.")
+    # 문제 제기 섹션
+    st.markdown(
+        '<div style="text-align:center; background:#F2F2F0; border-radius:12px; padding:1.6rem 1rem; margin-top:1.2rem;">'
+        '<div style="font-size:1.25rem; font-weight:800; letter-spacing:-0.01em;">'
+        "가장 비싼 실수는 현장에서 터진다.</div>"
+        '<div style="font-size:0.95rem; line-height:1.65; color:#5b6b7a; max-width:520px; margin:0.6rem auto 0;">'
+        "잘못된 문항 하나가 현장 나가서야 드러나면, 다시 돌릴 수 없는 비용이 됩니다. "
+        "사전테스트는 그 비용을 배포 전에 치릅니다.</div></div>",
+        unsafe_allow_html=True,
+    )
+    # 마지막 CTA
+    st.markdown(
+        '<div style="text-align:center; font-size:1.25rem; font-weight:800; margin:1.6rem 0 0.9rem;">'
+        "설문 배포 전에, 먼저 테스트하세요.</div>",
+        unsafe_allow_html=True,
+    )
+    _b_l, _b_c, _b_r = st.columns([1, 1, 1])
+    with _b_c:
+        if st.button(
+            "무료로 시작하기", type="primary", key="landing_final_btn",
+            use_container_width=True,
+        ):
+            login_dialog()
     st.divider()
-    st.subheader("AI 설정")
+    st.caption("© 2026 MetriX · 페르소나: Nemotron-Personas-Korea (NVIDIA, CC BY 4.0)")
+    st.caption(
+        "합성응답자는 실측을 대체할 수 없으며, 파일럿·사전 검증 용도로만 사용합니다."
+    )
 
-    # AI 제공자 선택
+
+def _render_project_management():
+    """프로젝트 관리 팝오버 — 새 프로젝트, 이름 변경·삭제, Sheets 연동 설정."""
+    if not SheetsProjectStore.is_configured():
+        with st.expander("Google Sheets 연동 설정", expanded=False):
+            st.markdown(SheetsProjectStore.setup_guide())
+    with st.expander("➕ 새 프로젝트 추가", expanded=False):
+        with st.form("new_project_form", border=False):
+            new_project_name = st.text_input("프로젝트 이름")
+            create_submitted = st.form_submit_button(
+                "프로젝트 만들기", use_container_width=True
+            )
+        if create_submitted:
+            try:
+                new_pid = _project_store.create_project(new_project_name)
+            except ValueError as e:
+                st.error(str(e))
+            else:
+                _save_current_project()
+                _load_project_to_store(new_pid)
+                st.rerun()
+    # 이름 변경·삭제
+    with st.expander("이름 변경 및 삭제", expanded=False):
+        cur_meta = _project_store.get_meta(current_pid)
+        new_name = st.text_input(
+            "프로젝트 이름",
+            value=cur_meta.get("name", ""),
+            key="project_rename_input",
+        )
+        if st.button("이름 변경", key="btn_rename_project"):
+            try:
+                _project_store.rename_project(current_pid, new_name)
+            except ValueError as e:
+                st.error(str(e))
+            else:
+                st.rerun()
+        st.divider()
+        if st.button("🗑️ 프로젝트 삭제", key="btn_delete_project", type="secondary"):
+            if len(projects) <= 1:
+                st.error("마지막 프로젝트는 삭제할 수 없습니다.")
+            else:
+                _project_store.delete_project(current_pid)
+                remaining = [p for p in projects if p["id"] != current_pid]
+                _load_project_to_store(remaining[0]["id"])
+                st.rerun()
+
+
+def _render_ai_settings():
+    """AI 설정 팝오버 — 제공자 선택, 내 API 키, 인증 상태, 작업 요약."""
     from core.providers import PROVIDER_REGISTRY
     provider_ids = list(PROVIDER_REGISTRY.keys())
     provider_labels = {pid: PROVIDER_REGISTRY[pid].label for pid in provider_ids}
@@ -862,25 +1012,11 @@ with st.sidebar:
     if selected_pid != store.get("provider"):
         store.set("provider", selected_pid)
         st.rerun()
-
     provider = get_provider(store.get("provider"))
-
     # 사용자 API 키 직접 입력 (기본: 미사용)
-    use_custom = st.checkbox("🔑 내 API 키 사용", value=False, key=f"use_custom_{store.get('provider')}")
-    st.markdown("""
-    <style>
-    div[data-testid="stTextInput"] input[type="password"] {
-        background-color: white !important;
-    }
-    /* 액세스 코드 입력값이 흰 배경에 묻히지 않도록 명시적으로 검정색 지정 */
-    input[type="password"][placeholder="액세스 코드"] {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        caret-color: #000000 !important;
-        opacity: 1 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    use_custom = st.checkbox(
+        "🔑 내 API 키 사용", value=False, key=f"use_custom_{store.get('provider')}"
+    )
     user_key = ""
     if use_custom:
         user_key = st.text_input(
@@ -891,11 +1027,9 @@ with st.sidebar:
             help="입력한 키는 브라우저 세션 메모리에만 보관되며, 서버에 저장되지 않습니다. 페이지를 새로고침하면 사라집니다.",
         )
         st.caption("⚠️ 입력한 API 키는 저장되지 않습니다. 브라우저를 닫거나 새로고침하면 다시 입력해야 합니다.")
-
     # 체크 해제 시 커스텀 키 제거 (secrets 키로 복귀)
     if not use_custom and provider.has_custom_key():
         provider.clear_custom_key()
-
     if use_custom:
         col_test, col_clear = st.columns(2)
         with col_test:
@@ -916,7 +1050,6 @@ with st.sidebar:
                 if st.button("키 지우기", use_container_width=True):
                     provider.clear_custom_key()
                     st.rerun()
-
     ok, msg = auth_status(store.get("provider"))
     st.write(f"선택: **{provider.label}**")
     st.caption(f"모델: {current_model()}")
@@ -924,7 +1057,6 @@ with st.sidebar:
         st.success(msg)
     else:
         st.error(msg)
-
     n_q = len(store.get("questions"))
     n_t = len(store.get("transcripts"))
     st.divider()
@@ -934,15 +1066,93 @@ with st.sidebar:
     if n_t:
         st.caption(f"인터뷰 트랜스크립트 {n_t}건")
 
-    st.divider()
-    if st.button("📖 이론적 배경", use_container_width=True):
-        theory_dialog()
+
+def _render_header():
+    """상단 헤더 — 로고·제목, 프로젝트 선택, 저장, 프로젝트 관리, AI 설정, 로그아웃."""
+    c_logo, c_proj, c_save, c_mgmt, c_ai, c_out = st.columns(
+        [2.6, 2.0, 0.6, 1.1, 0.9, 0.8], vertical_alignment="center"
+    )
+    with c_logo:
+        st.markdown(
+            '<div style="display:flex; align-items:baseline; gap:10px;">'
+            '<span style="font-size:20px; font-weight:800; color:#36454F;">MetriX</span>'
+            '<span style="font-size:15px; font-weight:700;">AI 합성응답자 기반 Pre-test</span>'
+            "</div>"
+            '<div style="font-size:12px; color:#5b6b7a; margin-top:-2px;">'
+            "Synthetic Respondent Pre-Test</div>",
+            unsafe_allow_html=True,
+        )
+    with c_proj:
+        if projects:
+            proj_options = [p["id"] for p in projects]
+            proj_names = {p["id"]: p["name"] for p in projects}
+            try:
+                default_idx = proj_options.index(current_pid)
+            except ValueError:
+                default_idx = 0
+            selected_pid = st.selectbox(
+                "프로젝트 선택",
+                options=proj_options,
+                format_func=lambda pid: proj_names.get(pid, pid),
+                index=default_idx,
+                key="project_selector",
+                label_visibility="collapsed",
+            )
+            if selected_pid != current_pid:
+                _save_current_project()
+                _load_project_to_store(selected_pid)
+                st.rerun()
+        else:
+            st.caption("프로젝트가 없습니다.")
+    with c_save:
+        if st.button("💾 저장", key="btn_save_project", use_container_width=True):
+            _save_current_project()
+            st.success("저장되었습니다.")
+    with c_mgmt:
+        with st.popover("📁 프로젝트 관리"):
+            _render_project_management()
+    with c_ai:
+        with st.popover("⚙️ AI 설정"):
+            _render_ai_settings()
+    with c_out:
+        if st.button("로그아웃", key="btn_logout", use_container_width=True):
+            st.session_state["access_granted"] = False
+            store.set("project_id", None)
+            st.rerun()
+    # 2행: 작업 순서 가이드 + 저장 상태 + 이론·업데이트 링크
+    _render_workflow_guide()
+    _render_save_status()
+    c_theory, c_log, c_code = st.columns([1, 1, 4])
+    with c_theory:
+        if st.button("📖 이론적 배경", key="theory_bg_header"):
+            theory_dialog()
+    with c_log:
+        if st.button("업데이트 기록", key="update_log_header"):
+            update_log_dialog()
+    with c_code:
+        st.caption("🔓 액세스 코드 확인됨")
 
 
-step = store.get("step")
-
-
-# ----------------------------------------------------------------------------
+def _render_stepper():
+    """1~5단계 진행 표시 (완료 ✓ · 현재 · 예정). 버튼을 누르면 해당 단계로 이동한다."""
+    current_step = store.get("step")
+    cols = st.columns(5)
+    for step_number, step_name in enumerate(STEPS, start=1):
+        status = (
+            "complete" if step_number < current_step
+            else "current" if step_number == current_step
+            else "upcoming"
+        )
+        mark = "✓ " if status == "complete" else ""
+        with cols[step_number - 1]:
+            if st.button(
+                f"{mark}{step_number}. {step_name}",
+                key=f"stepper_{status}_{step_number}",
+                use_container_width=True,
+                type="primary" if status == "current" else "secondary",
+                help="현재 단계" if status == "current" else f"{step_name} 단계로 이동",
+            ):
+                goto(step_number)
 step = store.get("step")
 
 
@@ -1798,112 +2008,9 @@ def _render_leave_guard():
     )
 
 
-def _render_project_panel():
-    # 액세스 코드 입력 전에는 프로젝트 목록 대신 안내 카드를 표시 (UX 개선 ①)
-    if not is_code_verified():
-        with st.container(border=True, key="project_management_card"):
-            st.markdown("#### 📁 프로젝트 관리")
-            st.info(
-                "🔒 액세스 코드를 확인하면 프로젝트 목록이 나타납니다.\n\n"
-                "왼쪽 사이드바에서 코드를 입력해 주세요."
-            )
-            st.caption("작업 순서: 1. 프로젝트 만들기 → 2. 설문·페르소나 설계 → 3. 가상 응답 생성 → 4. 저장")
-        return
-    with st.container(border=True, key="project_management_card"):
-        st.markdown("#### 📁 프로젝트 관리")
-        _render_workflow_guide()
-        _render_save_status()
-        _render_leave_guard()
-        if not SheetsProjectStore.is_configured():
-            with st.expander("Google Sheets 연동 설정", expanded=False):
-                st.markdown(SheetsProjectStore.setup_guide())
 
-        if projects:
-            proj_options = [p["id"] for p in projects]
-            proj_names = {p["id"]: p["name"] for p in projects}
-            try:
-                default_idx = proj_options.index(current_pid)
-            except ValueError:
-                default_idx = 0
-            selected_pid = st.selectbox(
-                "프로젝트 선택",
-                options=proj_options,
-                format_func=lambda pid: proj_names.get(pid, pid),
-                index=default_idx,
-                key="project_selector",
-                label_visibility="collapsed",
-            )
-            if selected_pid != current_pid:
-                _save_current_project()
-                _load_project_to_store(selected_pid)
-                st.rerun()
-
-            with st.expander("➕ 새 프로젝트 추가", expanded=False):
-                with st.form("new_project_form", border=False):
-                    new_project_name = st.text_input("프로젝트 이름")
-                    create_submitted = st.form_submit_button(
-                        "프로젝트 만들기", use_container_width=True
-                    )
-                if create_submitted:
-                    try:
-                        new_pid = _project_store.create_project(new_project_name)
-                    except ValueError as e:
-                        st.error(str(e))
-                    else:
-                        _save_current_project()
-                        _load_project_to_store(new_pid)
-                        st.rerun()
-
-            if st.button("💾 저장", use_container_width=True, key="btn_save_project"):
-                _save_current_project()
-                st.success("저장되었습니다.")
-
-            # 이름 변경·삭제
-            with st.expander("이름 변경 및 삭제", expanded=False):
-                cur_meta = _project_store.get_meta(selected_pid)
-                new_name = st.text_input(
-                    "프로젝트 이름",
-                    value=cur_meta.get("name", ""),
-                    key="project_rename_input",
-                )
-                if st.button("이름 변경", key="btn_rename_project"):
-                    try:
-                        _project_store.rename_project(selected_pid, new_name)
-                    except ValueError as e:
-                        st.error(str(e))
-                    else:
-                        st.rerun()
-                st.divider()
-                if st.button("🗑️ 프로젝트 삭제", key="btn_delete_project", type="secondary"):
-                    if len(projects) <= 1:
-                        st.error("마지막 프로젝트는 삭제할 수 없습니다.")
-                    else:
-                        _project_store.delete_project(selected_pid)
-                        remaining = [p for p in projects if p["id"] != selected_pid]
-                        _load_project_to_store(remaining[0]["id"])
-                        st.rerun()
-        else:
-            st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
-            with st.form("first_project_form", border=False):
-                first_project_name = st.text_input("프로젝트 이름")
-                first_create_submitted = st.form_submit_button(
-                    "첫 프로젝트 만들기", use_container_width=True
-                )
-            if first_create_submitted:
-                try:
-                    first_pid = _project_store.create_project(first_project_name)
-                except ValueError as e:
-                    st.error(str(e))
-                else:
-                    _load_project_to_store(first_pid)
-                    st.rerun()
-            st.stop()
-
-
-
-# 라우팅
+# 라우팅 — Qualtrics 방식: 로그인 전에는 랜딩, 로그인 후에는 단일 화면 앱
 # ----------------------------------------------------------------------------
-# 제목 행과 카드 행을 분리해 본문과 프로젝트 카드의 윗선을 맞춘다.
 page_titles = {
     1: ("1. 설문 설계", "가상 응답을 생성할 설문 문항을 입력하세요."),
     2: ("2. 페르소나 설계", "가상 응답자의 인구통계 분포를 설정합니다. 항목별 비율의 합은 100%여야 합니다."),
@@ -1911,20 +2018,39 @@ page_titles = {
     4: ("4. 가상 응답 생성", "AI로 가상 응답자를 생성합니다."),
     5: ("5. 결과", ""),
 }
-header_col, _ = st.columns([3, 1], gap="large")
-with header_col:
-    page_title, page_caption = page_titles[step]
-    st.header(page_title)
-    if page_caption:
-        st.caption(page_caption)
 
-main_col, project_col = st.columns([3, 1], gap="large")
-with project_col:
-    _render_project_panel()
-with main_col:
-    {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}[
-        f"step{step}"
-    ]()
+if not is_code_verified():
+    _render_landing()
+    st.stop()
+
+_render_header()
+_render_stepper()
+_render_leave_guard()
+
+if not projects:
+    st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
+    with st.form("first_project_form", border=False):
+        first_project_name = st.text_input("프로젝트 이름")
+        first_create_submitted = st.form_submit_button("첫 프로젝트 만들기")
+    if first_create_submitted:
+        try:
+            first_pid = _project_store.create_project(first_project_name)
+        except ValueError as e:
+            st.error(str(e))
+        else:
+            _load_project_to_store(first_pid)
+            st.rerun()
+    st.stop()
+
+# 5개 섹션을 한 페이지에 순서대로 쌓는다 (A안 단일 화면).
+_step_fns = {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}
+for _step_no in (1, 2, 3, 4, 5):
+    st.divider()
+    _page_title, _page_caption = page_titles[_step_no]
+    st.header(_page_title)
+    if _page_caption:
+        st.caption(_page_caption)
+    _step_fns[f"step{_step_no}"]()
 
 # ----------------------------------------------------------------------------
 # 푸터 — 데이터 출처 표기 (CC BY 4.0) + 정직한 한계 고지
