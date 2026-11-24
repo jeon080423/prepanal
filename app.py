@@ -1000,7 +1000,7 @@ def _report_mockup_html():
         )
     sidebar = (
         '<div class="pp-mockup-side" style="width:158px; flex-shrink:0; background:#176F68; '
-        'color:#FFFFFF; padding:14px 12px;">'
+        'color:#FFFFFF; padding:10px 12px;">'
         '<div style="font-size:14px; font-weight:800;">PrePanel</div>'
         '<div style="font-size:10px; color:#BFE3DA; margin-top:1px;">by MetriX</div>'
         '<div style="font-size:10px; letter-spacing:0.08em; color:#BFE3DA; margin:14px 0 5px;">프로젝트</div>'
@@ -1011,7 +1011,7 @@ def _report_mockup_html():
         '<div style="margin-top:12px;">' + "".join(step_rows) + "</div></div>"
     )
     # 문항별 응답 분포 막대 — 숫자 없는 모양만 (예시 분포임을 표시)
-    bar_heights = [16, 24, 40, 58, 74]
+    bar_heights = [11, 17, 28, 41, 52]
     bar_opacities = ["0.35", "0.5", "0.65", "0.85", "1"]
     bars = "".join(
         f'<div style="flex:1; height:{h}px; background:#39BCA7; opacity:{o}; '
@@ -1022,7 +1022,7 @@ def _report_mockup_html():
         f'<div style="flex:1; text-align:center;">{i}점</div>' for i in range(1, 6)
     )
     main = (
-        '<div class="pp-mockup-main" style="flex:1; min-width:0; background:#F8F9F6; padding:14px 16px;">'
+        '<div class="pp-mockup-main" style="flex:1; min-width:0; background:#F8F9F6; padding:10px 14px;">'
         '<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px;">'
         '<span style="font-size:13px; font-weight:800; color:#17242C;">← 파일럿 진단 리포트</span>'
         '<span style="display:flex; gap:6px; align-items:center; flex-shrink:0;">'
@@ -1031,10 +1031,10 @@ def _report_mockup_html():
         '<span style="font-size:11px; font-weight:700; color:#17242C; background:#FFFFFF; '
         'border:1px solid #D8E6DF; border-radius:8px; padding:5px 9px;">↓ 리포트 다운로드</span>'
         "</span></div>"
-        '<div style="font-size:16px; font-weight:800; color:#17242C; margin-top:12px;">파일럿 진단 리포트</div>'
+        '<div style="font-size:16px; font-weight:800; color:#17242C; margin-top:8px;">파일럿 진단 리포트</div>'
         '<div style="font-size:11.5px; color:#5A6E6B; margin-top:2px;">'
         "가상 응답 10,000건을 기반으로 설문 품질을 진단했습니다.</div>"
-        '<div class="pp-mockup-cards" style="display:flex; gap:10px; margin-top:12px;">'
+        '<div class="pp-mockup-cards" style="display:flex; gap:10px; margin-top:8px;">'
         '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
         '<div style="font-size:11px; color:#5A6E6B;">가상 응답</div>'
         '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">10,000건</div></div>'
@@ -1042,7 +1042,7 @@ def _report_mockup_html():
         '<div style="font-size:11px; color:#5A6E6B;">진단 단계</div>'
         '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">5단계</div></div>'
         "</div>"
-        '<div class="pp-mockup-tabs" style="display:flex; gap:14px; margin-top:14px; border-bottom:1px solid #D8E6DF; '
+        '<div class="pp-mockup-tabs" style="display:flex; gap:14px; margin-top:10px; border-bottom:1px solid #D8E6DF; '
         'padding-bottom:7px; font-size:11.5px; white-space:nowrap; overflow:hidden;">'
         '<span style="font-weight:800; color:#176F68; border-bottom:2px solid #176F68; '
         'padding-bottom:6px; margin-bottom:-8px;">주요 진단 결과</span>'
@@ -1050,7 +1050,7 @@ def _report_mockup_html():
         '<span style="color:#5A6E6B;">응답자 프로필</span>'
         '<span style="color:#5A6E6B;">개선 제안</span></div>'
         '<div style="background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; '
-        'padding:10px 12px; margin-top:12px;">'
+        'padding:10px 12px; margin-top:8px;">'
         '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">'
         '<span style="font-size:10px; font-weight:800; color:#C62828; background:#FDECEC; '
         'border-radius:6px; padding:2px 6px;">Q07</span>'
@@ -1061,13 +1061,13 @@ def _report_mockup_html():
         "Q07. '해당 제품을 다른 사람에게 추천할 의향이 있다.' — "
         "긍정 응답(4~5점)으로 치우친 분포입니다. 유사 문항과 중복될 가능성이 있습니다.</div>"
         "</div>"
-        '<div class="pp-mockup-panels" style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">'
+        '<div class="pp-mockup-panels" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">'
         '<div style="flex:1.15; min-width:0; background:#FFFFFF; border:1px solid #D8E6DF; '
         'border-radius:10px; padding:10px 12px;">'
         '<div style="font-size:11.5px; font-weight:700; color:#17242C;">Q07 응답 분포 '
         '<span style="font-size:9px; color:#176F68; background:#E4F2ED; border-radius:999px; '
         'padding:2px 6px;">예시</span></div>'
-        f'<div style="display:flex; align-items:flex-end; gap:8px; height:74px; margin-top:10px;">{bars}</div>'
+        f'<div style="display:flex; align-items:flex-end; gap:8px; height:52px; margin-top:6px;">{bars}</div>'
         f'<div style="display:flex; gap:8px; font-size:10px; color:#5A6E6B; margin-top:4px; white-space:nowrap;">{bar_labels}</div>'
         "</div>"
         '<div style="flex:1; min-width:0; background:#FFFFFF; border:1px solid #D8E6DF; '
@@ -1157,12 +1157,13 @@ def _render_landing():
         )
         if st.button("첫 프로젝트 시작하기 ›", type="primary", key="landing_hero_btn"):
             _enter_app()
-        # 히어로 일러스트 — 배경이 랜딩색(#F8F9F6)과 같아 경계가 안 보임. 모서리 둥글림 제거.
+        # 히어로 일러스트 — 배경이 랜딩색(#F8F9F6)과 같아 경계가 안 보임.
+        # 화면 하단이 잘리지 않도록 너비를 72%로 줄여 세로 높이를 낮춤(가운데 정렬).
         if HERO_ILLUSTRATION_B64:
             st.markdown(
                 f'<img src="data:image/webp;base64,{HERO_ILLUSTRATION_B64}" '
                 'alt="가상 페르소나가 설문에 답하는 일러스트" '
-                'style="width:100%; margin-top:0.8rem; display:block;">',
+                'style="width:72%; margin:0.6rem auto 0; display:block;">',
                 unsafe_allow_html=True,
             )
     with _hero_r:
