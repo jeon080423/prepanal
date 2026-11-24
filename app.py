@@ -69,6 +69,7 @@ st.markdown(
 # ----------------------------------------------------------------------------
 def init_state():
     store.set_default("step", 1)
+    store.set_default("page", "step1")
     store.set_default("questions", [])
     store.set_default("persona_dims",
                       {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
@@ -122,6 +123,21 @@ def verify_access_code(code: str) -> tuple[bool, str]:
 def goto(step: int):
     _autosave_current_project()
     store.set("step", step)
+    store.set("page", f"step{step}")
+    st.rerun()
+
+
+def goto_page(page: str):
+    """상단 메뉴별 페이지 이동 (페이지 상태 방식, 네이티브 멀티페이지 미사용).
+    단계 페이지면 step도 함께 맞춘다.
+    """
+    _autosave_current_project()
+    store.set("page", page)
+    if page.startswith("step"):
+        try:
+            store.set("step", int(page[4:]))
+        except ValueError:
+            pass
     st.rerun()
 
 
@@ -366,13 +382,14 @@ GPT-4·Llama 405B 80%, 이민 이슈에서 실제 30% 대 LLM 100%에 육박했�
     )
 
 
-@st.dialog("업데이트 기록", width="large")
-def update_log_dialog():
-    """UPDATE_LOG.md 내용을 그대로 보여주는 다이얼로그.
+def _render_update_log_page():
+    """업데이트 기록 페이지 — UPDATE_LOG.md 내용을 별도 페이지로 보여준다.
 
     Streamlit Cloud 배포 환경에서도 레포 파일이 함께 배포되므로
     app.py와 같은 디렉터리의 UPDATE_LOG.md를 직접 읽는다.
     """
+    st.header("업데이트 기록")
+    st.caption("PrePanel 변경 이력")
     log_path = Path(__file__).parent / "UPDATE_LOG.md"
     try:
         text = log_path.read_text(encoding="utf-8")
@@ -739,6 +756,7 @@ def _load_project_to_store(pid: str):
         store.set(f"model_select_{prov_id}", state["model_select"])
     store.set("project_id", pid)
     store.set("step", 1)
+    store.set("page", "step1")
     # 결과 관련 캐시 초기화
     store.set("gen_cache", {})
     # 불러온 상태는 저장된 상태와 동일하므로 저장 지점을 기록
@@ -793,6 +811,7 @@ if st.session_state.pop("_fresh_after_verify", False):
     store.set("gen_meta", None)
     store.set("gen_cache", {})
     store.set("step", 1)
+    store.set("page", "step1")
     projects = _project_store.list_projects()
     current_pid = new_pid
 elif not is_code_verified():
@@ -964,11 +983,51 @@ def _render_landing():
     )
 
 
-def _render_project_management():
-    """프로젝트 관리 팝오버 — 새 프로젝트, 이름 변경·삭제, Sheets 연동 설정."""
+def _render_projects_page():
+    """프로젝트 관리 페이지 — 프로젝트명 텍스트 목록 + 프로젝트별 삭제, 생성·이름 변경.
+
+    상단 메뉴 '프로젝트 관리'에서 들어오는 별도 페이지. 프로젝트명은
+    드롭다운이 아니라 텍스트 목록으로 제시하고, 각 프로젝트마다 삭제 버튼을 둔다.
+    삭제는 core/projects.py의 delete_project()를 재사용하고, 마지막 프로젝트는
+    삭제할 수 없다. 삭제 후에는 남은 첫 프로젝트로 이동한다.
+    """
+    st.header("프로젝트 관리")
+    st.caption("프로젝트 목록 · 새 프로젝트 만들기 · 이름 변경")
     if not SheetsProjectStore.is_configured():
         with st.expander("Google Sheets 연동 설정", expanded=False):
             st.markdown(SheetsProjectStore.setup_guide())
+    # 프로젝트 목록 (텍스트 + 프로젝트별 열기/삭제)
+    st.subheader("프로젝트 목록")
+    _all_projects = _project_store.list_projects()
+    if not _all_projects:
+        st.caption("프로젝트가 없습니다.")
+    for _p in _all_projects:
+        _is_current = _p["id"] == current_pid
+        _label = ("● " if _is_current else "") + _p["name"]
+        if _is_current:
+            _label += " (현재)"
+        _c_name, _c_open, _c_del = st.columns([5.0, 1.0, 1.0])
+        with _c_name:
+            st.markdown(_label)
+        with _c_open:
+            if not _is_current:
+                if st.button("열기", key=f"btn_proj_open_{_p['id']}", use_container_width=True):
+                    _save_current_project()
+                    _load_project_to_store(_p["id"])
+                    st.rerun()
+        with _c_del:
+            if st.button("🗑️ 삭제", key=f"btn_proj_del_{_p['id']}", use_container_width=True):
+                if len(_all_projects) <= 1:
+                    st.error("마지막 프로젝트는 삭제할 수 없습니다.")
+                else:
+                    _autosave_current_project()
+                    _project_store.delete_project(_p["id"])
+                    _remaining = _project_store.list_projects()
+                    _load_project_to_store(_remaining[0]["id"])
+                    store.set("page", "projects")
+                    st.rerun()
+    st.divider()
+    # 새 프로젝트 추가
     with st.expander("➕ 새 프로젝트 추가", expanded=False):
         with st.form("new_project_form", border=False):
             new_project_name = st.text_input("프로젝트 이름")
@@ -984,13 +1043,13 @@ def _render_project_management():
                 _save_current_project()
                 _load_project_to_store(new_pid)
                 st.rerun()
-    # 이름 변경·삭제
-    with st.expander("이름 변경 및 삭제", expanded=False):
+    # 이름 변경 (현재 프로젝트)
+    with st.expander("이름 변경", expanded=False):
         cur_meta = _project_store.get_meta(current_pid)
         new_name = st.text_input(
             "프로젝트 이름",
             value=cur_meta.get("name", ""),
-            key="project_rename_input",
+            key=f"project_rename_input_{current_pid}",
         )
         if st.button("이름 변경", key="btn_rename_project"):
             try:
@@ -998,15 +1057,6 @@ def _render_project_management():
             except ValueError as e:
                 st.error(str(e))
             else:
-                st.rerun()
-        st.divider()
-        if st.button("🗑️ 프로젝트 삭제", key="btn_delete_project", type="secondary"):
-            if len(projects) <= 1:
-                st.error("마지막 프로젝트는 삭제할 수 없습니다.")
-            else:
-                _project_store.delete_project(current_pid)
-                remaining = [p for p in projects if p["id"] != current_pid]
-                _load_project_to_store(remaining[0]["id"])
                 st.rerun()
 
 
@@ -1080,12 +1130,6 @@ def _render_ai_settings():
         st.caption(f"인터뷰 트랜스크립트 {n_t}건")
 
 
-@st.dialog("📁 프로젝트 관리", width="large")
-def project_management_dialog():
-    """프로젝트 관리 다이얼로그 — _render_project_management() 본문 재사용."""
-    _render_project_management()
-
-
 @st.dialog("⚙️ AI 설정", width="large")
 def ai_settings_dialog():
     """AI 설정 다이얼로그 — _render_ai_settings() 본문 재사용."""
@@ -1143,8 +1187,8 @@ def _render_sidebar():
 def _render_header():
     """상단 헤더 (Qualtrics 카피) — 로고 + 주 메뉴 팝오버 + 저장 + 도움말 + 내 계정.
 
-    주 메뉴: 5개 단계(스테퍼와 같은 goto 이동) + 프로젝트 관리 + 업데이트 기록.
-    내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
+    주 메뉴: 5개 단계(스테퍼와 같은 goto 이동) + 프로젝트 관리·업데이트 기록
+    (별도 페이지로 이동). 내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
     알림 종·전환기는 해당 기능이 없어 넣지 않는다.
     """
     c_logo, c_menu, c_save, c_help, c_account = st.columns(
@@ -1174,9 +1218,9 @@ def _render_header():
                     goto(step_number)
             st.divider()
             if st.button("📁 프로젝트 관리", key="btn_mainmenu_project_mgmt", use_container_width=True):
-                project_management_dialog()
+                goto_page("projects")
             if st.button("업데이트 기록", key="btn_mainmenu_update_log", use_container_width=True):
-                update_log_dialog()
+                goto_page("updates")
     with c_save:
         if st.button("💾 저장", key="btn_save_project", use_container_width=True):
             _save_current_project()
@@ -2074,7 +2118,7 @@ def _render_leave_guard():
 
 
 
-# 라우팅 — Qualtrics 방식: 로그인 전에는 랜딩, 로그인 후에는 단일 화면 앱
+# 라우팅 — Qualtrics 방식: 로그인 전에는 랜딩, 로그인 후에는 상단 메뉴별 페이지 앱
 # ----------------------------------------------------------------------------
 page_titles = {
     1: ("1. 설문 설계", "가상 응답을 생성할 설문 문항을 입력하세요."),
@@ -2108,9 +2152,23 @@ if not projects:
             st.rerun()
     st.stop()
 
-# 5개 섹션을 한 페이지에 순서대로 쌓는다 (A안 단일 화면).
+# 상단 메뉴별 페이지 분할 (페이지 상태 방식) — 현재 페이지만 본문에 렌더링한다.
+# 5개 단계 + 프로젝트 관리 + 업데이트 기록 = 7개 페이지. 스테퍼는 상단에 유지된다.
 _step_fns = {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}
-for _step_no in (1, 2, 3, 4, 5):
+_current_page = store.get("page") or "step1"
+if _current_page == "projects":
+    _render_projects_page()
+elif _current_page == "updates":
+    _render_update_log_page()
+else:
+    _step_no = store.get("step") or 1
+    if _current_page.startswith("step"):
+        try:
+            _step_no = int(_current_page[4:])
+        except ValueError:
+            pass
+    if _step_no not in page_titles:
+        _step_no = 1
     st.divider()
     _page_title, _page_caption = page_titles[_step_no]
     st.header(_page_title)
