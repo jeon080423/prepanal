@@ -25,6 +25,11 @@ from config import (AGE_BANDS, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
                     NEMOTRON_EXTRACT_VERSION, NEMOTRON_FACETS,
                     NEMOTRON_FACET_LABELS, NEMOTRON_PROVINCES, PERSONA_SOURCES,
                     REGION_MAP, SAMPLE_XLSX_PATH)
+try:
+    from hero_illustration_b64 import HERO_ILLUSTRATION_B64
+except Exception:
+    HERO_ILLUSTRATION_B64 = ""
+
 from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, GenerationService,
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type,
@@ -1152,6 +1157,14 @@ def _render_landing():
         )
         if st.button("첫 프로젝트 시작하기 ›", type="primary", key="landing_hero_btn"):
             _enter_app()
+        # 히어로 일러스트 — CTA 아래 빈 공간 채움 (스타일 가이드 기준 생성, 텍스트 없음)
+        if HERO_ILLUSTRATION_B64:
+            st.markdown(
+                f'<img src="data:image/webp;base64,{HERO_ILLUSTRATION_B64}" '
+                'alt="가상 페르소나가 설문에 답하는 일러스트" '
+                'style="width:100%; border-radius:14px; margin-top:1.4rem; display:block;">',
+                unsafe_allow_html=True,
+            )
     with _hero_r:
         st.markdown(_report_mockup_html(), unsafe_allow_html=True)
     # 수치 스트립 (검증된 내용만: 10,000건·5단계·17개 시도·CC BY 4.0)
