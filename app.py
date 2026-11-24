@@ -72,7 +72,7 @@ def init_state():
     store.set_default("questions", [])
     store.set_default("persona_dims",
                       {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
-    store.set_default("persona_source", "manual")
+    store.set_default("persona_source", "nemotron")
     store.set_default("nemotron_quotas", None)
     store.set_default("nemotron_quota_mode", "ratio")
     store.set_default("nemotron_count_quotas", None)
@@ -715,7 +715,7 @@ def _load_project_to_store(pid: str):
     defaults = {
         "questions": [],
         "persona_dims": {k: dict(v) for k, v in DEFAULT_PERSONA.items()},
-        "persona_source": "manual",
+        "persona_source": "nemotron",
         "nemotron_quotas": None,
         "nemotron_quota_mode": "ratio",
         "nemotron_count_quotas": None,
@@ -779,7 +779,7 @@ if st.session_state.pop("_fresh_after_verify", False):
     store.set("project_id", new_pid)
     store.set("questions", [])
     store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
-    store.set("persona_source", "manual")
+    store.set("persona_source", "nemotron")
     store.set("nemotron_quotas", None)
     store.set("nemotron_quota_mode", "ratio")
     store.set("nemotron_count_quotas", None)
@@ -1564,7 +1564,7 @@ def step2():
 
 
 
-    source = store.get("persona_source") or "manual"
+    source = store.get("persona_source") or "nemotron"
     source = st.radio(
         "페르소나 출처",
         options=list(PERSONA_SOURCES.keys()),
@@ -1816,7 +1816,7 @@ def step4():
         )
         st.write("- 주관식 문항: LLM 배치 생성")
         source_label = PERSONA_SOURCES.get(
-            store.get("persona_source") or "manual", "")
+            store.get("persona_source") or "nemotron", "")
         st.write(f"- 페르소나 출처: {source_label}")
         n_trans = len(store.get("transcripts"))
         nemotron_on = store.get("persona_source") == "nemotron"
@@ -1855,7 +1855,7 @@ def step4():
                     cache=store.get("gen_cache"),
                     transcripts=store.get("transcripts") if store.get("use_precision") else None,
                     use_precision=store.get("use_precision"),
-                    persona_source=store.get("persona_source") or "manual",
+                    persona_source=store.get("persona_source") or "nemotron",
                     nemotron_quotas=store.get("nemotron_quotas"),
                     nemotron_count_quotas=(store.get("nemotron_count_quotas")
                                            if store.get("nemotron_quota_mode") == "count"
