@@ -51,7 +51,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon="",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",  # 사이드바 제거됨 — 기본 접힘
 )
 
 st.markdown(
@@ -1528,54 +1528,6 @@ def ai_settings_dialog():
     _render_ai_settings()
 
 
-def _render_sidebar():
-    """좌측 패널 (Qualtrics '프로젝트 폴더' 카피) — 귀하의 폴더 + 새 프로젝트.
-
-    없는 기능(별표 표시·공유)은 UI에 흔적도 남기지 않는다.
-    접기는 네이티브 사이드바 접기 컨트롤(<<)을 쓴다.
-    메뉴(프로젝트 관리·AI 설정·이론·업데이트·로그아웃)는 상단 헤더로 이동했다.
-    """
-    with st.sidebar:
-        st.subheader("프로젝트 폴더")
-        with st.expander("📁 귀하의 폴더", expanded=True):
-            if projects:
-                for p in projects:
-                    is_current = p["id"] == current_pid
-                    label = ("● " if is_current else "") + p["name"]
-                    if st.button(
-                        label,
-                        key=f"sidebar_proj_{p['id']}",
-                        use_container_width=True,
-                        type="primary" if is_current else "secondary",
-                    ):
-                        if not is_current:
-                            _save_current_project()
-                            _load_project_to_store(p["id"])
-                            st.rerun()
-            else:
-                st.caption("프로젝트가 없습니다.")
-        if st.button("＋ 새 프로젝트", key="btn_sidebar_new_project", use_container_width=True):
-            # 이름 입력 없이 한 번에 생성한다. "새 프로젝트"가 이미 있으면
-            # 날짜를 붙여 고유한 이름을 만든다 (기존 폼은 이름 중복 시 오류).
-            existing_names = {
-                p["name"].strip().casefold()
-                for p in _project_store.list_projects()
-            }
-            new_name = "새 프로젝트"
-            if new_name.casefold() in existing_names:
-                new_name = f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}"
-                suffix = 2
-                while new_name.casefold() in existing_names:
-                    new_name = (
-                        f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}-{suffix}"
-                    )
-                    suffix += 1
-            new_pid = _project_store.create_project(new_name)
-            _save_current_project()
-            _load_project_to_store(new_pid)
-            st.rerun()
-
-
 def _render_header():
     """상단 헤더 (Qualtrics 카피) — 로고 + 주 메뉴 팝오버 + 저장 + 도움말 + 내 계정.
 
@@ -1587,13 +1539,27 @@ def _render_header():
         [4.6, 1.0, 0.9, 0.7, 0.4, 1.3], vertical_alignment="center"
     )
     with c_logo:
+        _proj_name = ""
+        try:
+            _pid = store.get("project_id")
+            if _pid:
+                _meta = _project_store.get_meta(_pid)
+                _proj_name = (_meta or {}).get("name", "")
+        except Exception:
+            _proj_name = ""
+        _proj_line = (
+            f'<div style="font-size:12px; color:#176F68; font-weight:700; margin-top:1px;">'
+            f"📁 {_proj_name}</div>"
+            if _proj_name
+            else ""
+        )
         st.markdown(
             '<div style="display:flex; align-items:baseline; gap:10px;">'
             '<span style="font-size:20px; font-weight:800; color:#176F68;">MetriX</span>'
             '<span style="font-size:15px; font-weight:700;">AI 합성응답자 기반 Pre-test</span>'
             "</div>"
             '<div style="font-size:12px; color:#5A6E6B; margin-top:-2px;">'
-            "Synthetic Respondent Pre-Test</div>",
+            "Synthetic Respondent Pre-Test</div>" + _proj_line,
             unsafe_allow_html=True,
         )
     with c_menu:
@@ -1609,9 +1575,6 @@ def _render_header():
                 ):
                     goto(step_number)
             st.divider()
-            if st.button("🏠 랜딩페이지로 돌아가기", key="btn_mainmenu_landing", use_container_width=True):
-                st.session_state["show_landing"] = True
-                st.rerun()
             if st.button("📦 제품 소개 (모델·대표성)", key="btn_mainmenu_product", use_container_width=True):
                 st.session_state["show_product"] = True
                 st.query_params["page"] = "product"
@@ -2541,8 +2504,7 @@ if st.session_state.get("show_landing", False) or not is_code_verified():
     _render_landing()
     st.stop()
 
-_render_sidebar()
-_render_header()
+_render_header()  # 사이드바 제거됨 — 프로젝트 관리는 주 메뉴 '프로젝트 관리' 페이지로 통합
 _render_stepper()
 _render_leave_guard()
 
