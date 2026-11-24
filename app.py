@@ -202,8 +202,8 @@ def _is_current_state_saved() -> bool:
 # ----------------------------------------------------------------------------
 # 이론적 배경 (팝업 다이얼로그)
 # ----------------------------------------------------------------------------
-@st.dialog("📖 이론적 배경", width="large")
-def theory_dialog():
+def _render_theory_content():
+    """모델 상세 설명 + 대표성 — 이론적 배경 본문 (다이얼로그·제품 페이지 공용)."""
     st.caption("합성응답자(Synthetic Respondents) 방법론의 이론적 기초")
 
     st.subheader("1. 합성응답자란?")
@@ -380,6 +380,61 @@ GPT-4·Llama 405B 80%, 이민 이슈에서 실제 30% 대 LLM 100%에 육박했�
 - Li, X. et al. (2025). LLM 합성응답자의 응답 동질화 연구 (arXiv:2507.02919). ANES 실측 대비 극단적 동질화 비율(VR < 0.05) — 낙태 이슈 실제 40% vs GPT-4·Llama 405B 80%, 이민 이슈 실제 30% vs LLM 100%에 육박.
 """
     )
+
+
+
+@st.dialog("📖 이론적 배경", width="large")
+def theory_dialog():
+    _render_theory_content()
+
+def _render_product_page():
+    """제품 상세 페이지 — 모델 상세 설명 + 대표성.
+
+    랜딩 네비 '제품'과 앱 주 메뉴에서 들어온다. 로그인 여부와 무관하게 보인다.
+    """
+    # 상단: 뒤로 + 앱으로/로그인
+    c_back, c_go = st.columns([3, 1], vertical_alignment="center")
+    with c_back:
+        if st.button("← 랜딩으로", key="btn_product_back_landing"):
+            st.session_state["show_product"] = False
+            st.rerun()
+    with c_go:
+        if is_code_verified():
+            if st.button("앱으로 →", key="btn_product_go_app", type="primary", use_container_width=True):
+                st.session_state["show_product"] = False
+                st.rerun()
+        else:
+            if st.button("로그인", key="btn_product_login", type="primary", use_container_width=True):
+                _enter_app()
+    st.header("PrePanel 제품")
+    st.caption("모델과 대표성 — 합성응답자가 어떻게 만들어지고, 얼마나 모집단을 닮았는지")
+    st.divider()
+    # 대표성 요약 — 핵심 수치만 (검증된 내용만)
+    st.subheader("대표성 — 한눈에 보기")
+    st.markdown(
+        "합성응답자는 **본조사 전 파일럿 검증용**입니다. 실측을 대체하지 않습니다. "
+        "아래 수치는 패널 구성이 모집단을 얼마나 닮았는지, 그리고 응답 분산이 얼마나 복원됐는지를 보여줍니다."
+    )
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("페르소나", "10,000건", "Nemotron 발췌본")
+    with m2:
+        st.metric("분포 오차", "최대 0.44%p", "셀 기준")
+    with m3:
+        st.metric("지역 쿼터", "17개 시도", "권역 완화 포함")
+    with m4:
+        st.metric("벤치마크", "KOSIS", "집계표 기준")
+    st.markdown(
+        "**분산복원 베이스라인** (임시 벤치마크, n=200) — 평균 오차 0.102 · SD 비율 1.018 · "
+        "JSD 0.0151 · 소수 의견 재현율 1.00 · 극단 동질화 문항 비율 0.00. "
+        "이 벤치마크에서는 분산 붕괴가 관측되지 않았습니다. "
+        "단, **대표성이 좋아졌다고 응답 정확도가 좋아졌다는 뜻은 아닙니다.** "
+        "패널 구성이 모집단을 닮았다는 것과, 그 패널이 실제 사람처럼 응답한다는 것은 별개의 문제입니다. "
+        "(Pew Research: 합성응답자 평균 12%p 오차)"
+    )
+    st.divider()
+    # 모델 상세 설명 (이론적 배경 본문 재사용)
+    _render_theory_content()
 
 
 def _render_update_log_page():
@@ -861,6 +916,16 @@ def login_dialog():
     st.caption("액세스 코드는 관리자에게 문의하세요.")
 
 
+def _enter_app():
+    """랜딩에서 앱으로 들어간다. 이미 로그인했으면 코드 재입력 없이 바로 앱으로,
+    아니면 로그인 다이얼로그를 연다."""
+    if is_code_verified():
+        st.session_state["show_landing"] = False
+        st.rerun()
+    else:
+        login_dialog()
+
+
 def _report_mockup_html():
     """히어로 우측 파일럿 진단 리포트 화면 목업 — 순수 HTML (이미지 파일 아님).
 
@@ -1019,24 +1084,34 @@ def _render_landing():
         unsafe_allow_html=True,
     )
     # 상단 네비: 로고 + 메뉴 + 로그인만 ('무료로 시작하기' 버튼 삭제)
-    nav_logo, nav_login = st.columns([6, 1], vertical_alignment="center")
+    # '제품'은 상세 페이지로 이동하는 버튼, 기능·요금제·문의는 섹션 앵커
+    nav_logo, nav_product, nav_links, nav_login = st.columns(
+        [2.0, 0.7, 3.3, 1.0], vertical_alignment="center"
+    )
     with nav_logo:
         st.markdown(
-            '<div style="display:flex; align-items:baseline; gap:14px;">'
+            '<div style="display:flex; align-items:baseline; gap:10px;">'
             '<span style="font-size:22px; font-weight:800; color:#176F68; letter-spacing:-0.02em;">MetriX</span>'
             '<span style="font-size:18px; font-weight:800; color:#176F68;">PrePanel</span>'
-            '<span style="font-size:14px;">'
-            '<a href="#pp-product" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">제품</a>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_product:
+        if st.button("제품", key="landing_nav_product", type="tertiary"):
+            st.session_state["show_product"] = True
+            st.rerun()
+    with nav_links:
+        st.markdown(
+            '<div style="font-size:14px;">'
             '<a href="#pp-how" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">기능</a>'
             '<a href="#pp-pricing" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">요금제</a>'
             '<a href="#pp-contact" style="color:#5A6E6B; text-decoration:none;">문의</a>'
-            "</span>"
             "</div>",
             unsafe_allow_html=True,
         )
     with nav_login:
         if st.button("로그인", key="landing_login_btn", use_container_width=True):
-            login_dialog()
+            _enter_app()
     st.divider()
     # 히어로: 좌 텍스트 + 우 리포트 목업
     st.markdown('<div id="pp-product"></div>', unsafe_allow_html=True)
@@ -1058,7 +1133,7 @@ def _render_landing():
             unsafe_allow_html=True,
         )
         if st.button("첫 프로젝트 시작하기 ›", type="primary", key="landing_hero_btn"):
-            login_dialog()
+            _enter_app()
     with _hero_r:
         st.markdown(_report_mockup_html(), unsafe_allow_html=True)
     # 수치 스트립 (검증된 내용만: 10,000건·5단계·17개 시도·CC BY 4.0)
@@ -1234,7 +1309,7 @@ def _render_landing():
             "첫 프로젝트 무료로 시작하기", type="primary", key="landing_pricing_btn",
             use_container_width=True,
         ):
-            login_dialog()
+            _enter_app()
     # 문의 섹션 (네비 '문의' 앵커 대상)
     st.markdown(
         '<div id="pp-contact" style="background:#E4F2ED; border-radius:12px; '
@@ -1262,7 +1337,7 @@ def _render_landing():
             "첫 프로젝트 시작하기", type="primary", key="landing_final_btn",
             use_container_width=True,
         ):
-            login_dialog()
+            _enter_app()
     st.divider()
     st.caption("© 2026 MetriX · 페르소나: Nemotron-Personas-Korea (NVIDIA, CC BY 4.0)")
     st.caption(
@@ -1476,8 +1551,8 @@ def _render_header():
     (별도 페이지로 이동). 내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
     알림 종·전환기는 해당 기능이 없어 넣지 않는다.
     """
-    c_logo, c_menu, c_save, c_help, c_account = st.columns(
-        [5.0, 1.0, 0.7, 0.4, 1.3], vertical_alignment="center"
+    c_logo, c_menu, c_home, c_save, c_help, c_account = st.columns(
+        [4.6, 1.0, 0.9, 0.7, 0.4, 1.3], vertical_alignment="center"
     )
     with c_logo:
         st.markdown(
@@ -1502,10 +1577,20 @@ def _render_header():
                 ):
                     goto(step_number)
             st.divider()
+            if st.button("🏠 랜딩페이지로 돌아가기", key="btn_mainmenu_landing", use_container_width=True):
+                st.session_state["show_landing"] = True
+                st.rerun()
+            if st.button("📦 제품 소개 (모델·대표성)", key="btn_mainmenu_product", use_container_width=True):
+                st.session_state["show_product"] = True
+                st.rerun()
             if st.button("📁 프로젝트 관리", key="btn_mainmenu_project_mgmt", use_container_width=True):
                 goto_page("projects")
             if st.button("업데이트 기록", key="btn_mainmenu_update_log", use_container_width=True):
                 goto_page("updates")
+    with c_home:
+        if st.button("🏠 랜딩", key="btn_go_landing", use_container_width=True, help="랜딩페이지로 돌아가기"):
+            st.session_state["show_landing"] = True
+            st.rerun()
     with c_save:
         if st.button("💾 저장", key="btn_save_project", use_container_width=True):
             _save_current_project()
@@ -2413,7 +2498,10 @@ page_titles = {
     5: ("5. 결과", ""),
 }
 
-if not is_code_verified():
+if st.session_state.get("show_product", False):
+    _render_product_page()
+    st.stop()
+if st.session_state.get("show_landing", False) or not is_code_verified():
     _render_landing()
     st.stop()
 
