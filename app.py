@@ -1141,28 +1141,28 @@ def _render_landing():
     _hero_l, _hero_r = st.columns([1, 1.08], vertical_alignment="center")
     with _hero_l:
         st.markdown(
-            '<div style="padding: 0.6rem 0;">'
+            '<div style="padding: 0.2rem 0;">'
             '<span style="display:inline-block; background:#E4F2ED; color:#176F68; font-size:12px; '
             'font-weight:700; letter-spacing:0.08em; padding:6px 12px; border-radius:999px;">'
             "PREPANEL · AI 설문 사전테스트</span>"
             '<div style="font-size:1.85rem; font-weight:800; line-height:1.3; letter-spacing:-0.02em; '
-            'color:#17242C; margin-top:1rem;">'
+            'color:#17242C; margin-top:0.7rem;">'
             "설문을 배포하기 전,<br>"
             '<span style="background:linear-gradient(transparent 62%, #9ADCD0 62%);">응답을 먼저</span> '
             "만나보세요.</div>"
-            '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.9rem;">'
+            '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.6rem;">'
             "10,000명의 가상 페르소나가 설문에 응답합니다.</div>"
             "</div>",
             unsafe_allow_html=True,
         )
         if st.button("첫 프로젝트 시작하기 ›", type="primary", key="landing_hero_btn"):
             _enter_app()
-        # 히어로 일러스트 — CTA 아래 빈 공간 채움 (스타일 가이드 기준 생성, 텍스트 없음)
+        # 히어로 일러스트 — 배경이 랜딩색(#F8F9F6)과 같아 경계가 안 보임. 모서리 둥글림 제거.
         if HERO_ILLUSTRATION_B64:
             st.markdown(
                 f'<img src="data:image/webp;base64,{HERO_ILLUSTRATION_B64}" '
                 'alt="가상 페르소나가 설문에 답하는 일러스트" '
-                'style="width:100%; border-radius:14px; margin-top:1.4rem; display:block;">',
+                'style="width:100%; margin-top:0.8rem; display:block;">',
                 unsafe_allow_html=True,
             )
     with _hero_r:
@@ -1170,7 +1170,7 @@ def _render_landing():
     # 수치 스트립 (검증된 내용만: 10,000건·5단계·17개 시도·CC BY 4.0)
     st.markdown(
         '<div class="pp-stats" style="display:flex; background:#E4F2ED; border-radius:14px; '
-        'margin-top:1.4rem; padding:0.9rem 0.4rem;">'
+        'margin-top:0.8rem; padding:0.9rem 0.4rem;">'
         '<div style="flex:1; text-align:center;">'
         '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">10,000명</div>'
         '<div style="font-size:12px; color:#5A6E6B;">가상 페르소나 응답</div></div>'
@@ -1189,7 +1189,7 @@ def _render_landing():
     # 기능 3단 (시안: 01 설문 가져오기 · 02 가상 응답 생성 · 03 문제 문항 찾기)
     st.markdown(
         '<div id="pp-how" style="font-size:13px; font-weight:700; letter-spacing:0.08em; color:#176F68; '
-        'margin:1.8rem 0 0.9rem;">어떻게 동작하나요?</div>',
+        'margin:0.8rem 0 0.7rem;">어떻게 동작하나요?</div>',
         unsafe_allow_html=True,
     )
     _f1, _f2, _f3 = st.columns(3)
