@@ -426,15 +426,15 @@ def _metrix_ci_b64() -> str:
     return ""
 
 
-# 사이드바 밝은 회색 배경(#F2F2F0, 테마 secondary 배경색) + 어두운 텍스트
+# 사이드바 밝은 회색 배경(#E4F2ED, 테마 secondary 배경색) + 어두운 텍스트
 st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background: #F2F2F0;
+        background: #E4F2ED;
     }
     [data-testid="stSidebar"] * {
-        color: #232323 !important;
+        color: #17242C !important;
     }
     /* 사이드바 알림 박스(success/warning/info/error)는 밝은 배경이라 글씨를 검정으로 */
     [data-testid="stSidebar"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] *,
@@ -446,46 +446,46 @@ st.markdown(
     }
     [data-testid="stSidebar"] input {
         background-color: #FFFFFF !important;
-        color: #232323 !important;
+        color: #17242C !important;
         border: 1px solid #D1D1D6 !important;
     }
     [data-testid="stSidebar"] button {
         background-color: #FFFFFF !important;
-        color: #232323 !important;
+        color: #17242C !important;
         border: 1px solid #D1D1D6 !important;
     }
     [data-testid="stSidebar"] button:hover {
-        background-color: #E8E8E3 !important;
+        background-color: #D2E8E0 !important;
         border-color: #9CA3AF !important;
     }
     /* 현재 프로젝트 버튼(primary): 차콜 배경 + 흰 텍스트 */
     [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
-        background-color: #36454F !important;
+        background-color: #176F68 !important;
         color: #FFFFFF !important;
-        border-color: #36454F !important;
+        border-color: #176F68 !important;
     }
     [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] * {
         color: #FFFFFF !important;
     }
     [data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:hover {
-        background-color: #2A3742 !important;
-        border-color: #2A3742 !important;
+        background-color: #115750 !important;
+        border-color: #115750 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="radio"] div {
-        color: #232323 !important;
+        color: #17242C !important;
     }
     /* 선택된 라디오 버튼 강조색: 밝은 파랑 */
     [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child {
-        border-color: #0A84FF !important;
-        background-color: #0A84FF !important;
+        border-color: #176F68 !important;
+        background-color: #176F68 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] > div:first-child > div {
         background-color: #FFFFFF !important;
     }
     /* 포커스 강조색: 차콜 */
     [data-testid="stSidebar"] input:focus {
-        border-color: #36454F !important;
-        box-shadow: 0 0 0 1px #36454F !important;
+        border-color: #176F68 !important;
+        box-shadow: 0 0 0 1px #176F68 !important;
     }
     [data-testid="stSidebar"] .stExpander {
         background-color: #FFFFFF !important;
@@ -496,17 +496,17 @@ st.markdown(
     }
     [data-testid="stSidebar"] details summary {
         background-color: transparent !important;
-        color: #232323 !important;
+        color: #17242C !important;
     }
     [data-testid="stSidebar"] details summary:hover {
-        background-color: #E8E8E3 !important;
+        background-color: #D2E8E0 !important;
     }
     [data-testid="stSidebar"] hr {
         border-color: #D1D1D6 !important;
     }
     [data-testid="stSidebar"] details summary svg {
-        fill: #232323 !important;
-        color: #232323 !important;
+        fill: #17242C !important;
+        color: #17242C !important;
     }
     [data-testid="stSidebar"] input::placeholder {
         color: #888888 !important;
@@ -555,15 +555,15 @@ st.markdown(
     }
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     [data-testid="stSidebar"] label {
-        color: #232323 !important;
+        color: #17242C !important;
     }
     [data-testid="stSidebar"] [data-baseweb="select"] > div {
         background-color: #FFFFFF !important;
-        color: #232323 !important;
+        color: #17242C !important;
         border-color: #D1D1D6 !important;
     }
     [data-testid="stSidebar"] [data-baseweb="select"] span {
-        color: #232323 !important;
+        color: #17242C !important;
     }
     /* AI 제공자 선택칸과 화살표: 흰 배경 + 검정 표시 */
     [data-testid="stSidebar"] .st-key-provider_select [data-baseweb="select"] > div,
@@ -652,19 +652,19 @@ st.markdown(
         text-align: left !important;
         font-size: 15px !important;
         font-weight: 600 !important;
-        color: #232323 !important;
+        color: #17242C !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_complete_"] button::before {
-        color: #16A34A !important;
+        color: #39BCA7 !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_current_"] button::before {
-        color: #2563EB !important;
+        color: #176F68 !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_upcoming_"] button::before {
         color: #6B7280 !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_current_"] button {
-        background: rgba(96, 165, 250, 0.15) !important;
+        background: rgba(57, 188, 167, 0.15) !important;
     }
     [data-testid="stSidebar"] [class*="st-key-step_nav_"] button:hover {
         background: rgba(0, 0, 0, 0.06) !important;
@@ -687,7 +687,7 @@ st.markdown(
 # 레이아웃 개편 (2026-11-23, 이사님 결정)
 # - 사이드바 제거 → 상단 헤더 + 1~5단계 진행 표시 + 5개 섹션을 한 페이지에 쌓기 (A안)
 # - 첫 화면은 인덱스 랜딩페이지, 로그인하면 앱이 나오는 Qualtrics 방식
-# - 색상: 차콜 그레이 톤 (primary #36454F, 테마는 .streamlit/config.toml 참조)
+# - 색상: 딥틸·민트 톤 (primary #176F68, accent #39BCA7, 배경 #F8F9F6, 본문 #17242C, 테마는 .streamlit/config.toml 참조)
 # 이 파일은 app.py에 합치는 조각(splice)용이다. 직접 실행하지 않는다.
 # ----------------------------------------------------------------------------
 # 프로젝트 저장소 설정 (기존 사이드바에서 이동)
@@ -861,118 +861,405 @@ def login_dialog():
     st.caption("액세스 코드는 관리자에게 문의하세요.")
 
 
-def _render_landing():
-    """첫 화면 — 인덱스 랜딩페이지 (Qualtrics 방식). 로그인 전에는 앱 대신 이 화면을 보여준다."""
-    nav_logo, nav_login, nav_start = st.columns(
-        [5, 1, 1.6], vertical_alignment="center"
+def _report_mockup_html():
+    """히어로 우측 파일럿 진단 리포트 화면 목업 — 순수 HTML (이미지 파일 아님).
+
+    다크 틸 사이드바(실제 앱 5단계) + 리포트 카드 형태. Streamlit의
+    st.markdown(unsafe_allow_html=True)에 그대로 넣는 것을 전제로 한다.
+    검증되지 않은 수치·진단 문구는 일절 쓰지 않고, 예시로 보이는 부분에는
+    '예시' 표시를 단다.
+    """
+    steps = [
+        ("1", "설문 설계", "문항·보기 인식", True),
+        ("2", "페르소나 설계", "분포 설정", True),
+        ("3", "분포 학습", "분포 반영", True),
+        ("4", "가상 응답 생성", "10,000건 생성", True),
+        ("5", "결과", "진단 리포트", False),  # 현재 화면
+    ]
+    step_rows = []
+    for num, name, sub, done in steps:
+        if done:
+            circle = (
+                '<span style="flex-shrink:0; width:20px; height:20px; border-radius:50%; '
+                'background:#39BCA7; color:#FFFFFF; font-size:11px; font-weight:800; '
+                'display:inline-flex; align-items:center; justify-content:center;">✓</span>'
+            )
+            row_style = "display:flex; gap:8px; align-items:flex-start; padding:7px 8px; border-radius:8px;"
+        else:
+            circle = (
+                '<span style="flex-shrink:0; width:20px; height:20px; border-radius:50%; '
+                'background:#FFFFFF; color:#176F68; font-size:11px; font-weight:800; '
+                'display:inline-flex; align-items:center; justify-content:center;">5</span>'
+            )
+            row_style = (
+                "display:flex; gap:8px; align-items:flex-start; padding:7px 8px; "
+                "border-radius:8px; background:rgba(255,255,255,0.14);"
+            )
+        step_rows.append(
+            f'<div style="{row_style}">{circle}'
+            f'<span><span style="display:block; font-size:11.5px; font-weight:700; color:#FFFFFF; '
+            f'word-break:keep-all;">'
+            f"{num}&nbsp; {name}</span>"
+            f'<span class="pp-mockup-step-sub" style="display:block; font-size:10px; '
+            f'color:#BFE3DA; margin-top:1px;">{sub}</span></span></div>'
+        )
+    sidebar = (
+        '<div class="pp-mockup-side" style="width:158px; flex-shrink:0; background:#176F68; '
+        'color:#FFFFFF; padding:14px 12px;">'
+        '<div style="font-size:14px; font-weight:800;">PrePanel</div>'
+        '<div style="font-size:10px; color:#BFE3DA; margin-top:1px;">by MetriX</div>'
+        '<div style="font-size:10px; letter-spacing:0.08em; color:#BFE3DA; margin:14px 0 5px;">프로젝트</div>'
+        '<div style="font-size:11.5px; font-weight:700; line-height:1.4;">신제품 만족도 조사 (v1) '
+        '<span style="display:inline-block; font-size:9px; font-weight:700; '
+        'border:1px solid rgba(255,255,255,0.6); border-radius:999px; padding:1px 6px; '
+        'margin-left:2px; vertical-align:1px;">예시</span></div>'
+        '<div style="margin-top:12px;">' + "".join(step_rows) + "</div></div>"
     )
+    # 문항별 응답 분포 막대 — 숫자 없는 모양만 (예시 분포임을 표시)
+    bar_heights = [16, 24, 40, 58, 74]
+    bar_opacities = ["0.35", "0.5", "0.65", "0.85", "1"]
+    bars = "".join(
+        f'<div style="flex:1; height:{h}px; background:#39BCA7; opacity:{o}; '
+        f'border-radius:4px 4px 0 0;"></div>'
+        for h, o in zip(bar_heights, bar_opacities)
+    )
+    bar_labels = "".join(
+        f'<div style="flex:1; text-align:center;">{i}점</div>' for i in range(1, 6)
+    )
+    main = (
+        '<div class="pp-mockup-main" style="flex:1; min-width:0; background:#F8F9F6; padding:14px 16px;">'
+        '<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px;">'
+        '<span style="font-size:13px; font-weight:800; color:#17242C;">← 파일럿 진단 리포트</span>'
+        '<span style="display:flex; gap:6px; align-items:center; flex-shrink:0;">'
+        '<span style="font-size:10px; font-weight:700; color:#176F68; background:#E4F2ED; '
+        'border-radius:999px; padding:3px 8px;">예시 화면</span>'
+        '<span style="font-size:11px; font-weight:700; color:#17242C; background:#FFFFFF; '
+        'border:1px solid #D8E6DF; border-radius:8px; padding:5px 9px;">↓ 리포트 다운로드</span>'
+        "</span></div>"
+        '<div style="font-size:16px; font-weight:800; color:#17242C; margin-top:12px;">파일럿 진단 리포트</div>'
+        '<div style="font-size:11.5px; color:#5A6E6B; margin-top:2px;">'
+        "가상 응답 10,000건을 기반으로 설문 품질을 진단했습니다.</div>"
+        '<div class="pp-mockup-cards" style="display:flex; gap:10px; margin-top:12px;">'
+        '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
+        '<div style="font-size:11px; color:#5A6E6B;">가상 응답</div>'
+        '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">10,000건</div></div>'
+        '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
+        '<div style="font-size:11px; color:#5A6E6B;">진단 단계</div>'
+        '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">5단계</div></div>'
+        "</div>"
+        '<div class="pp-mockup-tabs" style="display:flex; gap:14px; margin-top:14px; border-bottom:1px solid #D8E6DF; '
+        'padding-bottom:7px; font-size:11.5px; white-space:nowrap; overflow:hidden;">'
+        '<span style="font-weight:800; color:#176F68; border-bottom:2px solid #176F68; '
+        'padding-bottom:6px; margin-bottom:-8px;">주요 진단 결과</span>'
+        '<span style="color:#5A6E6B;">문항별 상세 분석</span>'
+        '<span style="color:#5A6E6B;">응답자 프로필</span>'
+        '<span style="color:#5A6E6B;">개선 제안</span></div>'
+        '<div style="background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; '
+        'padding:10px 12px; margin-top:12px;">'
+        '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">'
+        '<span style="font-size:10px; font-weight:800; color:#C62828; background:#FDECEC; '
+        'border-radius:6px; padding:2px 6px;">Q07</span>'
+        '<span style="font-size:11.5px; font-weight:700; color:#17242C;">응답 편향 가능성</span>'
+        '<span style="font-size:9px; color:#176F68; background:#E4F2ED; border-radius:999px; '
+        'padding:2px 6px;">예시</span></div>'
+        '<div style="font-size:11px; color:#5A6E6B; line-height:1.6; margin-top:6px;">'
+        "Q07. '해당 제품을 다른 사람에게 추천할 의향이 있다.' — "
+        "긍정 응답(4~5점)으로 치우친 분포입니다. 유사 문항과 중복될 가능성이 있습니다.</div>"
+        "</div>"
+        '<div class="pp-mockup-panels" style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">'
+        '<div style="flex:1.15; min-width:0; background:#FFFFFF; border:1px solid #D8E6DF; '
+        'border-radius:10px; padding:10px 12px;">'
+        '<div style="font-size:11.5px; font-weight:700; color:#17242C;">Q07 응답 분포 '
+        '<span style="font-size:9px; color:#176F68; background:#E4F2ED; border-radius:999px; '
+        'padding:2px 6px;">예시</span></div>'
+        f'<div style="display:flex; align-items:flex-end; gap:8px; height:74px; margin-top:10px;">{bars}</div>'
+        f'<div style="display:flex; gap:8px; font-size:10px; color:#5A6E6B; margin-top:4px; white-space:nowrap;">{bar_labels}</div>'
+        "</div>"
+        '<div style="flex:1; min-width:0; background:#FFFFFF; border:1px solid #D8E6DF; '
+        'border-radius:10px; padding:10px 12px;">'
+        '<div style="font-size:11.5px; font-weight:700; color:#17242C;">응답자 프로필</div>'
+        '<div style="font-size:11px; color:#17242C; line-height:1.9; margin-top:6px;">'
+        "✓ 가상 페르소나 10,000명<br>✓ 17개 시도 지역 분포 반영<br>"
+        "✓ Nemotron-Personas-Korea 기반</div></div>"
+        "</div></div>"
+    )
+    return (
+        '<div style="display:flex; border:1px solid #D8E6DF; border-radius:16px; overflow:hidden; '
+        'background:#FFFFFF; box-shadow:0 14px 34px rgba(23,36,44,0.12); text-align:left;">'
+        + sidebar + main + "</div>"
+    )
+
+
+def _render_landing():
+    """첫 화면 — 인덱스 랜딩페이지 (Qualtrics 방식). 로그인 전에는 앱 대신 이 화면을 보여준다.
+
+    2026-11-24 지서방 1차 시안 방향: 밝은 배경(#F8F9F6)·딥틸(#176F68)·민트(#39BCA7).
+    상단 '무료로 시작하기' 버튼 없음(로그인만). 히어로는 좌 텍스트 + 우 파일럿 진단
+    리포트 HTML 목업. 수치(92%·3분·54%)는 검증되지 않아 쓰지 않는다.
+    """
+    # 모바일(≤768px)에서는 가로 컬럼을 세로로 쌓는다 — 랜딩에만 적용되는 스타일
+    # (_render_landing이 실행될 때만 페이지에 있으므로 로그인 후 앱에는 영향 없음)
+    st.markdown(
+        """<style>
+        @media (max-width: 768px) {
+          [data-testid="stHorizontalBlock"] { flex-direction: column !important; align-items: stretch !important; }
+          [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important; }
+          .pp-stats { flex-wrap: wrap !important; }
+          .pp-stats > div { flex: 1 1 45% !important; padding: 0.5rem 0 !important; }
+        }
+        @media (max-width: 560px) {
+          .pp-mockup-side { width: 118px !important; padding: 10px 8px !important; }
+          .pp-mockup-step-sub { display: none !important; }
+          .pp-mockup-main { padding: 10px 12px !important; }
+          .pp-mockup-cards { flex-direction: column !important; }
+          .pp-mockup-panels { flex-direction: column !important; }
+          .pp-mockup-tabs { flex-wrap: wrap !important; }
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    # 상단 네비: 로고 + 메뉴 + 로그인만 ('무료로 시작하기' 버튼 삭제)
+    nav_logo, nav_login = st.columns([6, 1], vertical_alignment="center")
     with nav_logo:
         st.markdown(
-            '<div style="display:flex; align-items:baseline; gap:18px;">'
-            '<span style="font-size:22px; font-weight:800; color:#36454F; letter-spacing:-0.02em;">MetriX</span>'
-            '<span style="font-size:14px; color:#5b6b7a;">제품&nbsp;&nbsp;기능&nbsp;&nbsp;요금제&nbsp;&nbsp;문의</span>'
+            '<div style="display:flex; align-items:baseline; gap:14px;">'
+            '<span style="font-size:22px; font-weight:800; color:#176F68; letter-spacing:-0.02em;">MetriX</span>'
+            '<span style="font-size:18px; font-weight:800; color:#176F68;">PrePanel</span>'
+            '<span style="font-size:14px;">'
+            '<a href="#pp-product" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">제품</a>'
+            '<a href="#pp-how" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">기능</a>'
+            '<a href="#pp-pricing" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">요금제</a>'
+            '<a href="#pp-contact" style="color:#5A6E6B; text-decoration:none;">문의</a>'
+            "</span>"
             "</div>",
             unsafe_allow_html=True,
         )
     with nav_login:
         if st.button("로그인", key="landing_login_btn", use_container_width=True):
             login_dialog()
-    with nav_start:
-        if st.button(
-            "무료로 시작하기", type="primary", key="landing_start_btn",
-            use_container_width=True,
-        ):
-            login_dialog()
     st.divider()
-    # 히어로
+    # 히어로: 좌 텍스트 + 우 리포트 목업
+    st.markdown('<div id="pp-product"></div>', unsafe_allow_html=True)
+    _hero_l, _hero_r = st.columns([1, 1.08], vertical_alignment="center")
+    with _hero_l:
+        st.markdown(
+            '<div style="padding: 0.6rem 0;">'
+            '<span style="display:inline-block; background:#E4F2ED; color:#176F68; font-size:12px; '
+            'font-weight:700; letter-spacing:0.08em; padding:6px 12px; border-radius:999px;">'
+            "PREPANEL · AI 설문 사전테스트</span>"
+            '<div style="font-size:1.85rem; font-weight:800; line-height:1.3; letter-spacing:-0.02em; '
+            'color:#17242C; margin-top:1rem;">'
+            "설문을 배포하기 전,<br>"
+            '<span style="background:linear-gradient(transparent 62%, #9ADCD0 62%);">응답을 먼저</span> '
+            "만나보세요.</div>"
+            '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.9rem;">'
+            "10,000명의 가상 페르소나가 설문에 응답합니다.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("첫 프로젝트 시작하기 ›", type="primary", key="landing_hero_btn"):
+            login_dialog()
+    with _hero_r:
+        st.markdown(_report_mockup_html(), unsafe_allow_html=True)
+    # 수치 스트립 (검증된 내용만: 10,000건·5단계·17개 시도·CC BY 4.0)
     st.markdown(
-        '<div style="text-align:center; padding: 1.6rem 0 0.4rem;">'
-        '<div style="font-size:13px; font-weight:700; letter-spacing:0.08em; color:#36454F;">'
-        "AI 합성응답자 기반 사전테스트</div>"
-        '<div style="font-size:2.1rem; font-weight:800; line-height:1.25; letter-spacing:-0.02em; margin-top:0.7rem;">'
-        "설문을 배포하기 전에,<br>응답을 미리 봅니다.</div>"
-        '<div style="font-size:1.02rem; line-height:1.65; color:#5b6b7a; max-width:560px; margin:0.9rem auto 0;">'
-        "실제 응답자를 기다리지 마세요. 10,000명의 가상 페르소나가 설문을 미리 답하고, "
-        "문제 문항을 배포 전에 찾아냅니다.</div>"
+        '<div class="pp-stats" style="display:flex; background:#E4F2ED; border-radius:14px; '
+        'margin-top:1.4rem; padding:0.9rem 0.4rem;">'
+        '<div style="flex:1; text-align:center;">'
+        '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">10,000명</div>'
+        '<div style="font-size:12px; color:#5A6E6B;">가상 페르소나 응답</div></div>'
+        '<div style="flex:1; text-align:center;">'
+        '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">5단계</div>'
+        '<div style="font-size:12px; color:#5A6E6B;">설계부터 결과까지</div></div>'
+        '<div style="flex:1; text-align:center;">'
+        '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">17개 시도</div>'
+        '<div style="font-size:12px; color:#5A6E6B;">지역 분포 쿼터</div></div>'
+        '<div style="flex:1; text-align:center;">'
+        '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">CC BY 4.0</div>'
+        '<div style="font-size:12px; color:#5A6E6B;">Nemotron-Personas-Korea</div></div>'
         "</div>",
         unsafe_allow_html=True,
     )
-    _cta_l, _cta_c, _cta_r = st.columns([1, 1, 1])
-    with _cta_c:
-        if st.button(
-            "무료로 시작하기", type="primary", key="landing_hero_btn",
-            use_container_width=True,
-        ):
-            login_dialog()
+    # 기능 3단 (시안: 01 설문 가져오기 · 02 가상 응답 생성 · 03 문제 문항 찾기)
     st.markdown(
-        '<div style="text-align:center; font-size:12px; color:#5b6b7a; margin-top:0.4rem;">'
-        "신용카드 필요 없음 · 첫 프로젝트 무료</div>",
+        '<div id="pp-how" style="font-size:13px; font-weight:700; letter-spacing:0.08em; color:#176F68; '
+        'margin:1.8rem 0 0.9rem;">어떻게 동작하나요?</div>',
         unsafe_allow_html=True,
     )
-    # 앱 미리보기 카드
-    with st.container(border=True):
-        st.caption("PrePanel 앱 미리보기")
-        st.markdown(
-            "1. 설문 설계 ✓ &nbsp;·&nbsp; 2. 페르소나 설계 ✓ &nbsp;·&nbsp; 3. 분포 학습",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div style="height:8px; border-radius:99px; background:#ececea; overflow:hidden;">'
-            '<div style="height:100%; width:62%; background:#36454F; border-radius:99px;"></div></div>'
-            '<div style="height:8px; border-radius:99px; background:#ececea; overflow:hidden; margin-top:6px;">'
-            '<div style="height:100%; width:44%; background:#7d8a96; border-radius:99px;"></div></div>',
-            unsafe_allow_html=True,
-        )
-        st.caption("가상 응답 200건 생성 중… 65%")
-    # 수치 스트립
-    _s1, _s2, _s3, _s4 = st.columns(4)
-    for _col, _num, _label in [
-        (_s1, "10,000건", "가상 페르소나"),
-        (_s2, "0.44%p", "분포 오차 최대"),
-        (_s3, "5단계", "설계부터 결과까지"),
-        (_s4, "CC BY 4.0", "Nemotron-Personas-Korea"),
-    ]:
-        with _col:
-            st.markdown(
-                f'<div style="text-align:center; padding:0.8rem 0;">'
-                f'<div style="font-size:1.35rem; font-weight:800; color:#36454F;">{_num}</div>'
-                f'<div style="font-size:12px; color:#5b6b7a;">{_label}</div></div>',
-                unsafe_allow_html=True,
-            )
-    # 기능 3단
     _f1, _f2, _f3 = st.columns(3)
     with _f1:
         with st.container(border=True):
-            st.markdown("**설문 설계**")
-            st.caption("PDF·HWPX·DOCX 설문지를 올리면 AI가 문항과 보기를 자동 인식합니다.")
+            st.markdown(
+                '<span style="display:inline-block; background:#176F68; color:#FFFFFF; font-size:12px; '
+                'font-weight:800; border-radius:999px; padding:3px 10px;">01</span>'
+                ' <span style="font-size:1.05rem; font-weight:800; color:#17242C;">설문 가져오기</span>',
+                unsafe_allow_html=True,
+            )
+            st.caption("이미 만든 설문을 그대로 업로드하거나, 링크를 붙여넣어 간편하게 불러올 수 있습니다.")
+            st.markdown(
+                '<div style="display:flex; gap:8px; align-items:center; margin-top:10px;">'
+                '<div style="flex:1; background:#FFFFFF; border:1.5px dashed #BFE3DA; border-radius:10px; '
+                'padding:10px 10px;">'
+                '<div style="height:6px; background:#E4F2ED; border-radius:3px;"></div>'
+                '<div style="height:6px; background:#E4F2ED; border-radius:3px; margin-top:6px; width:80%;"></div>'
+                '<div style="display:flex; gap:6px; margin-top:8px; align-items:center;">'
+                '<span style="width:14px; height:14px; border-radius:50%; background:#39BCA7; color:#FFFFFF; '
+                'font-size:9px; font-weight:800; display:inline-flex; align-items:center; justify-content:center;">✓</span>'
+                '<span style="width:14px; height:14px; border-radius:50%; background:#39BCA7; color:#FFFFFF; '
+                'font-size:9px; font-weight:800; display:inline-flex; align-items:center; justify-content:center;">✓</span>'
+                '<span style="font-size:10px; color:#5A6E6B;">문항 인식 완료</span></div></div>'
+                '<div style="display:flex; flex-direction:column; gap:6px;">'
+                '<span style="background:#2E7D32; color:#FFFFFF; font-size:10px; font-weight:800; '
+                'border-radius:6px; padding:4px 8px; text-align:center;">XLSX</span>'
+                '<span style="background:#1565C0; color:#FFFFFF; font-size:10px; font-weight:800; '
+                'border-radius:6px; padding:4px 8px; text-align:center;">DOCX</span>'
+                '<span style="background:#C62828; color:#FFFFFF; font-size:10px; font-weight:800; '
+                'border-radius:6px; padding:4px 8px; text-align:center;">PDF</span>'
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
     with _f2:
         with st.container(border=True):
-            st.markdown("**가상 응답 생성**")
-            st.caption("인구통계 분포대로 가상 응답자를 뽑아 LLM이 실제처럼 답합니다.")
+            st.markdown(
+                '<span style="display:inline-block; background:#176F68; color:#FFFFFF; font-size:12px; '
+                'font-weight:800; border-radius:999px; padding:3px 10px;">02</span>'
+                ' <span style="font-size:1.05rem; font-weight:800; color:#17242C;">가상 응답 생성</span>',
+                unsafe_allow_html=True,
+            )
+            st.caption("다양한 인구통계와 행동 특성을 가진 10,000명의 AI 가상 페르소나가 설문에 응답합니다.")
+            st.markdown(
+                '<div style="display:flex; justify-content:center; gap:10px; margin-top:12px;">'
+                '<div style="width:52px; height:52px; border-radius:50%; background:#E4F2ED; '
+                'position:relative; overflow:hidden; flex-shrink:0;">'
+                '<div style="position:absolute; left:50%; top:11px; width:20px; height:20px; border-radius:50%; '
+                'background:#F6CBB8; transform:translateX(-50%);"></div>'
+                '<div style="position:absolute; left:50%; top:33px; width:32px; height:20px; '
+                'border-radius:12px 12px 0 0; background:#7B8FB8; transform:translateX(-50%);"></div></div>'
+                '<div style="width:62px; height:62px; border-radius:50%; background:#E4F2ED; '
+                'position:relative; overflow:hidden; flex-shrink:0; margin-top:-6px; '
+                'border:2px solid #39BCA7;">'
+                '<div style="position:absolute; left:50%; top:8px; width:24px; height:24px; border-radius:50%; '
+                'background:#F6CBB8; transform:translateX(-50%);"></div>'
+                '<div style="position:absolute; left:50%; top:2px; width:26px; height:14px; '
+                'border-radius:13px 13px 0 0; background:#2A3663; transform:translateX(-50%);"></div>'
+                '<div style="position:absolute; left:50%; top:38px; width:38px; height:24px; '
+                'border-radius:14px 14px 0 0; background:#39BCA7; transform:translateX(-50%);"></div></div>'
+                '<div style="width:52px; height:52px; border-radius:50%; background:#E4F2ED; '
+                'position:relative; overflow:hidden; flex-shrink:0;">'
+                '<div style="position:absolute; left:50%; top:11px; width:20px; height:20px; border-radius:50%; '
+                'background:#F6CBB8; transform:translateX(-50%);"></div>'
+                '<div style="position:absolute; left:50%; top:33px; width:32px; height:20px; '
+                'border-radius:12px 12px 0 0; background:#5A6E6B; transform:translateX(-50%);"></div></div>'
+                "</div>"
+                '<div style="text-align:center; margin-top:10px;">'
+                '<span style="font-size:11px; font-weight:700; color:#176F68; background:#E4F2ED; '
+                'border-radius:999px; padding:3px 10px;">가상 페르소나 10,000명 ✓</span></div>',
+                unsafe_allow_html=True,
+            )
     with _f3:
         with st.container(border=True):
-            st.markdown("**파일럿 진단**")
-            st.caption("문제 문항과 분포 이상을 배포 전에 리포트로 확인합니다.")
+            st.markdown(
+                '<span style="display:inline-block; background:#176F68; color:#FFFFFF; font-size:12px; '
+                'font-weight:800; border-radius:999px; padding:3px 10px;">03</span>'
+                ' <span style="font-size:1.05rem; font-weight:800; color:#17242C;">문제 문항 찾기</span>',
+                unsafe_allow_html=True,
+            )
+            st.caption("응답 편향, 낮은 변별력, 문항 중복 등 개선이 필요한 문항을 AI가 정확히 짚어줍니다.")
+            st.markdown(
+                '<div style="position:relative; background:#FFFFFF; border:1px solid #D8E6DF; '
+                'border-radius:10px; padding:10px 12px; margin-top:10px;">'
+                '<div style="display:flex; align-items:center; gap:8px; padding:5px 0; '
+                'border-bottom:1px solid #E4F2ED;">'
+                '<span style="width:16px; height:16px; border-radius:50%; border:1.5px solid #BFE3DA; '
+                'flex-shrink:0;"></span>'
+                '<span style="font-size:11px; font-weight:700; color:#17242C;">Q06</span>'
+                '<span style="font-size:11px; color:#5A6E6B;">문항 중복 가능성</span>'
+                '<span style="margin-left:auto; width:15px; height:15px; border-radius:50%; background:#E4F2ED; '
+                'color:#176F68; font-size:10px; font-weight:800; display:inline-flex; align-items:center; '
+                'justify-content:center; flex-shrink:0;">i</span></div>'
+                '<div style="display:flex; align-items:center; gap:8px; padding:5px 0; '
+                'background:#FDECEC; border-radius:6px; margin:4px -4px; padding-left:8px; padding-right:8px;">'
+                '<span style="width:16px; height:16px; border-radius:50%; border:1.5px solid #E57373; '
+                'flex-shrink:0;"></span>'
+                '<span style="font-size:11px; font-weight:700; color:#17242C;">Q07</span>'
+                '<span style="font-size:11px; color:#5A6E6B; white-space:nowrap;">응답 편향 가능성</span>'
+                '<span style="margin-left:auto; width:15px; height:15px; border-radius:50%; background:#E57373; '
+                'color:#FFFFFF; font-size:10px; font-weight:800; display:inline-flex; align-items:center; '
+                'justify-content:center; flex-shrink:0;">!</span></div>'
+                '<div style="display:flex; align-items:center; gap:8px; padding:5px 0;">'
+                '<span style="width:16px; height:16px; border-radius:50%; border:1.5px solid #BFE3DA; '
+                'flex-shrink:0;"></span>'
+                '<span style="font-size:11px; font-weight:700; color:#17242C;">Q11</span>'
+                '<span style="font-size:11px; color:#5A6E6B;">변별력 낮음</span>'
+                '<span style="margin-left:auto; width:15px; height:15px; border-radius:50%; background:#E4F2ED; '
+                'color:#176F68; font-size:10px; font-weight:800; display:inline-flex; align-items:center; '
+                'justify-content:center; flex-shrink:0;">i</span></div>'
+                '<div style="position:absolute; right:8px; bottom:-14px; width:34px; height:34px; '
+                'border:3px solid #176F68; border-radius:50%; background:rgba(255,255,255,0.65);"></div>'
+                '<div style="position:absolute; right:2px; bottom:-22px; width:14px; height:4px; '
+                'background:#176F68; border-radius:2px; transform:rotate(45deg);"></div>'
+                "</div>",
+                unsafe_allow_html=True,
+            )
     # 문제 제기 섹션
     st.markdown(
-        '<div style="text-align:center; background:#F2F2F0; border-radius:12px; padding:1.6rem 1rem; margin-top:1.2rem;">'
-        '<div style="font-size:1.25rem; font-weight:800; letter-spacing:-0.01em;">'
+        '<div style="text-align:center; background:#E4F2ED; border-radius:12px; padding:1.6rem 1rem; margin-top:1.2rem;">'
+        '<div style="font-size:1.25rem; font-weight:800; letter-spacing:-0.01em; color:#17242C;">'
         "가장 비싼 실수는 현장에서 터진다.</div>"
-        '<div style="font-size:0.95rem; line-height:1.65; color:#5b6b7a; max-width:520px; margin:0.6rem auto 0;">'
+        '<div style="font-size:0.95rem; line-height:1.65; color:#5A6E6B; max-width:520px; margin:0.6rem auto 0;">'
         "잘못된 문항 하나가 현장 나가서야 드러나면, 다시 돌릴 수 없는 비용이 됩니다. "
         "사전테스트는 그 비용을 배포 전에 치릅니다.</div></div>",
         unsafe_allow_html=True,
     )
+    # 요금제 섹션 (네비 '요금제' 앵커 대상)
+    # 정식 요금제는 아직 정해지지 않았다 — 파일럿 기간 첫 프로젝트 무료만 안내한다.
+    st.markdown(
+        '<div id="pp-pricing" style="margin-top:1.8rem;">'
+        '<div style="font-size:13px; font-weight:700; letter-spacing:0.08em; color:#176F68; '
+        'margin-bottom:0.9rem;">요금제</div>'
+        '<div style="background:#FFFFFF; border:1px solid #D8E6DF; border-radius:14px; '
+        'padding:1.4rem 1.2rem; text-align:center;">'
+        '<div style="font-size:1.15rem; font-weight:800; color:#17242C;">파일럿 기간</div>'
+        '<div style="font-size:1.6rem; font-weight:800; color:#176F68; margin-top:0.4rem;">'
+        "첫 프로젝트 무료</div>"
+        '<div style="font-size:0.95rem; line-height:1.65; color:#5A6E6B; margin-top:0.5rem;">'
+        "신용카드가 필요 없습니다. 첫 프로젝트를 무료로 시작해 보세요.<br>"
+        "정식 요금제는 준비 중입니다. 출시 시 안내해 드립니다.</div>"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+    _p_l, _p_c, _p_r = st.columns([1, 1, 1])
+    with _p_c:
+        if st.button(
+            "첫 프로젝트 무료로 시작하기", type="primary", key="landing_pricing_btn",
+            use_container_width=True,
+        ):
+            login_dialog()
+    # 문의 섹션 (네비 '문의' 앵커 대상)
+    st.markdown(
+        '<div id="pp-contact" style="background:#E4F2ED; border-radius:12px; '
+        'padding:1.4rem 1.2rem; margin-top:1.8rem; text-align:center;">'
+        '<div style="font-size:1.15rem; font-weight:800; color:#17242C;">문의</div>'
+        '<div style="font-size:0.95rem; line-height:1.65; color:#5A6E6B; margin-top:0.5rem;">'
+        "PrePanel에 대해 궁금한 점이 있으시면 메트릭스로 문의해 주세요.<br>"
+        "액세스 코드는 관리자에게 문의하세요.</div>"
+        '<div style="margin-top:0.9rem;">'
+        '<a href="https://www.metrix.co.kr" target="_blank" '
+        'style="display:inline-block; background:#176F68; color:#FFFFFF; font-size:14px; '
+        'font-weight:700; text-decoration:none; border-radius:8px; padding:10px 18px;">'
+        "메트릭스 홈페이지 바로가기</a></div></div>",
+        unsafe_allow_html=True,
+    )
     # 마지막 CTA
     st.markdown(
-        '<div style="text-align:center; font-size:1.25rem; font-weight:800; margin:1.6rem 0 0.9rem;">'
+        '<div style="text-align:center; font-size:1.25rem; font-weight:800; color:#17242C; margin:1.6rem 0 0.9rem;">'
         "설문 배포 전에, 먼저 테스트하세요.</div>",
         unsafe_allow_html=True,
     )
     _b_l, _b_c, _b_r = st.columns([1, 1, 1])
     with _b_c:
         if st.button(
-            "무료로 시작하기", type="primary", key="landing_final_btn",
+            "첫 프로젝트 시작하기", type="primary", key="landing_final_btn",
             use_container_width=True,
         ):
             login_dialog()
@@ -981,8 +1268,6 @@ def _render_landing():
     st.caption(
         "합성응답자는 실측을 대체할 수 없으며, 파일럿·사전 검증 용도로만 사용합니다."
     )
-
-
 def _render_projects_page():
     """프로젝트 관리 페이지 — 프로젝트명 텍스트 목록 + 프로젝트별 삭제, 생성·이름 변경.
 
@@ -1197,10 +1482,10 @@ def _render_header():
     with c_logo:
         st.markdown(
             '<div style="display:flex; align-items:baseline; gap:10px;">'
-            '<span style="font-size:20px; font-weight:800; color:#36454F;">MetriX</span>'
+            '<span style="font-size:20px; font-weight:800; color:#176F68;">MetriX</span>'
             '<span style="font-size:15px; font-weight:700;">AI 합성응답자 기반 Pre-test</span>'
             "</div>"
-            '<div style="font-size:12px; color:#5b6b7a; margin-top:-2px;">'
+            '<div style="font-size:12px; color:#5A6E6B; margin-top:-2px;">'
             "Synthetic Respondent Pre-Test</div>",
             unsafe_allow_html=True,
         )
