@@ -392,38 +392,63 @@ def _render_product_page():
 
     랜딩 네비 '제품'과 앱 주 메뉴에서 들어온다. 로그인 여부와 무관하게 보인다.
     """
-    # 상단: 뒤로 + 앱으로/로그인
-    c_back, c_go = st.columns([3, 1], vertical_alignment="center")
+    # 상단: 뒤로 + 앱으로/로그인 — 양쪽 버튼을 같은 너비·같은 높이로 맞춤
+    c_back, c_spacer, c_go = st.columns([1, 4, 1], vertical_alignment="center")
     with c_back:
-        if st.button("← 랜딩으로", key="btn_product_back_landing"):
+        if st.button("← 랜딩으로", key="btn_product_back_landing", use_container_width=True):
             st.session_state["show_product"] = False
+            st.query_params.clear()
             st.rerun()
     with c_go:
         if is_code_verified():
-            if st.button("앱으로 →", key="btn_product_go_app", type="primary", use_container_width=True):
+            if st.button("앱으로 →", key="btn_product_go_app", use_container_width=True):
                 st.session_state["show_product"] = False
+                st.query_params.clear()
                 st.rerun()
         else:
-            if st.button("로그인", key="btn_product_login", type="primary", use_container_width=True):
+            if st.button("로그인", key="btn_product_login", use_container_width=True):
                 _enter_app()
-    st.header("PrePanel 제품")
-    st.caption("모델과 대표성 — 합성응답자가 어떻게 만들어지고, 얼마나 모집단을 닮았는지")
-    st.divider()
-    # 대표성 요약 — 핵심 수치만 (검증된 내용만)
-    st.subheader("대표성 — 한눈에 보기")
+    # 타이틀 — 랜딩 히어로와 같은 타이포그래피(HTML)
     st.markdown(
-        "합성응답자는 **본조사 전 파일럿 검증용**입니다. 실측을 대체하지 않습니다. "
-        "아래 수치는 패널 구성이 모집단을 얼마나 닮았는지, 그리고 응답 분산이 얼마나 복원됐는지를 보여줍니다."
+        '<div style="padding: 0.4rem 0 0.2rem 0;">'
+        '<div style="font-size:2rem; font-weight:800; line-height:1.3; letter-spacing:-0.02em; color:#17242C;">'
+        "PrePanel 제품</div>"
+        '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.6rem;">'
+        "모델과 대표성 — 합성응답자가 어떻게 만들어지고, 얼마나 모집단을 닮았는지</div>"
+        "</div>",
+        unsafe_allow_html=True,
     )
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("페르소나", "10,000건", "Nemotron 발췌본")
-    with m2:
-        st.metric("분포 오차", "최대 0.44%p", "셀 기준")
-    with m3:
-        st.metric("지역 쿼터", "17개 시도", "권역 완화 포함")
-    with m4:
-        st.metric("벤치마크", "KOSIS", "집계표 기준")
+    st.divider()
+    # 대표성 요약 — 랜딩 카드와 같은 스타일의 HTML 카드 4개 (폰트·줄 맞춤)
+    st.markdown(
+        '<div style="font-size:1.35rem; font-weight:800; letter-spacing:-0.02em; color:#17242C; margin:0.4rem 0 0.8rem 0;">'
+        "대표성 — 한눈에 보기</div>"
+        '<div style="font-size:1rem; line-height:1.65; color:#17242C;">'
+        "합성응답자는 <b>본조사 전 파일럿 검증용</b>입니다. 실측을 대체하지 않습니다. "
+        "아래 수치는 패널 구성이 모집단을 얼마나 닮았는지, 그리고 응답 분산이 얼마나 복원됐는지를 보여줍니다.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="display:flex; gap:16px; margin-top:1.1rem;">'
+        '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:14px; padding:18px 20px;">'
+        '<div style="font-size:13px; font-weight:600; color:#5A6E6B;">페르소나</div>'
+        '<div style="font-size:1.7rem; font-weight:800; color:#17242C; margin-top:6px; letter-spacing:-0.02em; white-space:nowrap;">10,000건</div>'
+        '<div style="font-size:12px; font-weight:600; color:#176F68; margin-top:8px;">↑ Nemotron 발췌본</div></div>'
+        '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:14px; padding:18px 20px;">'
+        '<div style="font-size:13px; font-weight:600; color:#5A6E6B;">분포 오차</div>'
+        '<div style="font-size:1.7rem; font-weight:800; color:#17242C; margin-top:6px; letter-spacing:-0.02em; white-space:nowrap;">최대 0.44%p</div>'
+        '<div style="font-size:12px; font-weight:600; color:#176F68; margin-top:8px;">↑ 셀 기준</div></div>'
+        '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:14px; padding:18px 20px;">'
+        '<div style="font-size:13px; font-weight:600; color:#5A6E6B;">지역 쿼터</div>'
+        '<div style="font-size:1.7rem; font-weight:800; color:#17242C; margin-top:6px; letter-spacing:-0.02em; white-space:nowrap;">17개 시도</div>'
+        '<div style="font-size:12px; font-weight:600; color:#176F68; margin-top:8px;">↑ 권역 완화 포함</div></div>'
+        '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:14px; padding:18px 20px;">'
+        '<div style="font-size:13px; font-weight:600; color:#5A6E6B;">벤치마크</div>'
+        '<div style="font-size:1.7rem; font-weight:800; color:#17242C; margin-top:6px; letter-spacing:-0.02em; white-space:nowrap;">KOSIS</div>'
+        '<div style="font-size:12px; font-weight:600; color:#176F68; margin-top:8px;">↑ 집계표 기준</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
     st.markdown(
         "**분산복원 베이스라인** (임시 벤치마크, n=200) — 평균 오차 0.102 · SD 비율 1.018 · "
         "JSD 0.0151 · 소수 의견 재현율 1.00 · 극단 동질화 문항 비율 0.00. "
@@ -1084,28 +1109,21 @@ def _render_landing():
         unsafe_allow_html=True,
     )
     # 상단 네비: 로고 + 메뉴 + 로그인만 ('무료로 시작하기' 버튼 삭제)
-    # '제품'은 상세 페이지로 이동하는 버튼, 기능·요금제·문의는 섹션 앵커
-    nav_logo, nav_product, nav_links, nav_login = st.columns(
-        [2.0, 0.7, 3.3, 1.0], vertical_alignment="center"
-    )
+    # 네비 4개 항목을 하나의 HTML 블록으로 통일해 줄·폰트를 맞춤.
+    # '제품'은 쿼리파라미터 링크(?page=product)로 상세 페이지로 이동,
+    # 기능·요금제·문의는 섹션 앵커.
+    nav_logo, nav_login = st.columns([6, 1], vertical_alignment="center")
     with nav_logo:
         st.markdown(
-            '<div style="display:flex; align-items:baseline; gap:10px;">'
+            '<div style="display:flex; align-items:baseline; gap:14px;">'
             '<span style="font-size:22px; font-weight:800; color:#176F68; letter-spacing:-0.02em;">MetriX</span>'
             '<span style="font-size:18px; font-weight:800; color:#176F68;">PrePanel</span>'
-            "</div>",
-            unsafe_allow_html=True,
-        )
-    with nav_product:
-        if st.button("제품", key="landing_nav_product", type="tertiary"):
-            st.session_state["show_product"] = True
-            st.rerun()
-    with nav_links:
-        st.markdown(
-            '<div style="font-size:14px;">'
+            '<span style="font-size:14px;">'
+            '<a href="?page=product" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">제품</a>'
             '<a href="#pp-how" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">기능</a>'
             '<a href="#pp-pricing" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">요금제</a>'
             '<a href="#pp-contact" style="color:#5A6E6B; text-decoration:none;">문의</a>'
+            "</span>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -1582,6 +1600,7 @@ def _render_header():
                 st.rerun()
             if st.button("📦 제품 소개 (모델·대표성)", key="btn_mainmenu_product", use_container_width=True):
                 st.session_state["show_product"] = True
+                st.query_params["page"] = "product"
                 st.rerun()
             if st.button("📁 프로젝트 관리", key="btn_mainmenu_project_mgmt", use_container_width=True):
                 goto_page("projects")
@@ -2498,6 +2517,9 @@ page_titles = {
     5: ("5. 결과", ""),
 }
 
+# 쿼리파라미터 ?page=product 와 show_product 세션 상태를 동기화
+if st.query_params.get("page") == "product":
+    st.session_state["show_product"] = True
 if st.session_state.get("show_product", False):
     _render_product_page()
     st.stop()
