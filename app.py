@@ -59,7 +59,7 @@ st.markdown(
     <style>
     [data-testid="stMain"] .block-container {
         max-width: none;
-        padding: 2rem clamp(1rem, 2.5vw, 3rem);
+        padding: 0.5rem clamp(1rem, 2.5vw, 3rem) 2rem;
     }
     div[data-testid="stExpander"] { background: #ffffff; border-radius: 8px; }
     h1, h2, h3 { letter-spacing: -0.02em; }
