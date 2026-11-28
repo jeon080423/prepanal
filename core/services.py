@@ -1,9 +1,11 @@
 """서비스 레이어 (core/services.py)
 
-app.py(UI)는 이 서비스들만 호출한다. 비즈니스 로직은 전부 여기(와 core/*)에.
-향후 REST API를 만들 때도 같은 서비스를 재사용하면 된다.
-"""
 
+app.py(UI)는 이 서비스들만 호출한다. 비즈니스 로직은 전부 여기(와 core/*)에.
+
+향후 REST API를 만들 때도 같은 서비스를 재사용하면 된다.
+
+"""
 from __future__ import annotations
 
 import io
@@ -11,9 +13,7 @@ import json
 import random
 import re
 import unicodedata
-
 import pandas as pd
-
 from config import (DEFAULT_BATCH_SIZE, METHODOLOGY_NOTE,
                     NEMOTRON_EXTRACT_SIZE, NEMOTRON_EXTRACT_VERSION,
                     PERSONA_SOURCES, QUESTIONNAIRE_PARSE_CHUNK_CHARS,
@@ -23,7 +23,6 @@ from .persona import (load_nemotron_extract, sample_nemotron_personas,
                       sample_persona)
 from .question_types import get_question_type
 from .strategies import (GenerationContext, get_strategy, select_strategy)
-
 
 # ----------------------------------------------------------------------------
 # 설문 문항 관리
@@ -54,7 +53,6 @@ class QuestionnaireService:
     def load_sample_questions() -> list[dict]:
         return json.loads(SAMPLE_Q_PATH.read_text(encoding="utf-8"))
 
-
 # ----------------------------------------------------------------------------
 # 분포 학습
 # ----------------------------------------------------------------------------
@@ -77,9 +75,12 @@ class LearningService:
                             questions: list[dict]) -> dict:
         """실제 응답 엑셀에서 문항별 응답 분포를 추출한다.
 
+
         Returns: {qid: {"matched_col": str, "type": str,
                          "dist": {option: prob}, "n": int}}
+
         주관식은 분포 없이 n만 기록한다.
+
         """
         learned: dict = {}
         for q in questions:
@@ -100,11 +101,332 @@ class LearningService:
                 "dist": {str(k): float(v) for k, v in dist.items()},
                 "n": n,
             }
+
         return learned
 
 
 # ----------------------------------------------------------------------------
+
+# 분기(branching) 적용 — 생성 단계 스킵 로직
+
+# ----------------------------------------------------------------------------
+
+# branching 필드는 자유 서술 문자열이다(예: "문3에서 ① 응답 시 문5로 이동",
+# "문2의 ② 응답자만 응답"). 파싱·편집 단계에서는 표시만 되고 생성 단계에서는
+# 전혀 쓰이지 않았다 — 그래서 Q12(동반인원)가 공란인데도 Q13(동반 유형)에
+# 전원이 응답하는 오류가 실제 데이터로 확인됐다.
+#
+# 생성은 전략별 그룹으로 나뉘어 문항 단위로 독립 수행되므로(각 전략은 branching을
+# 모른다), 분기는 모든 전략 결과가 합쳐지는 단일 지점인
+# GenerationService.generate_responses()에서 생성 직후 적용한다. 전략 종류
+# (학습/분포추출/고정밀/주관식)와 무관하게 동작하고, LLM 프롬프트는 건드리지
+# 않는다. 해당 없음 문항은 공란("")으로 둔다 — 문항별 유효 n은 공란 제외 건수다.
+#
+# 지원하는 서술 패턴 (파싱이 안 되면 해당 문항은 건드리지 않는다 — 오적용
+# 방지를 위해 모호한 조건은 무시하는 것이 원칙):
+#   (A) 종속 조건 — "문12의 응답자만 응답", "문2의 ② 응답자만 응답",
+#       "문3에서 ① 응답 시 응답": 해당 문항은 조건이 맞을 때만 답한다.
+#       트리거가 없으면 "원문항에 답함(공란 아님)"이 조건이다.
+#       부정 표현은 트리거 조건절 안에 있을 때만 극성을 뒤집는다
+#       ("Q12가 없음이면 스킵" → Q12가 없음이 아닐 때만 답한다).
+#       "…만 응답" 같은 긍정 한정이 있으면 뒤집지 않고
+#       ("문12의 ② 응답자만 응답, 나머지는 스킵"의 "스킵"은 조건절이 아니다),
+#       자기 문항 번호를 먼저 쓴 서술("Q13은 문12의 응답자만 응답")은
+#       자기 언급을 건너뛰고 다음 언급을 원문항으로 본다.
+#       파싱에 실패한 branching은 last_branch_meta["파싱 실패"]에 남긴다.
+#   (B) 건너뛰기 — "문3에서 ① 응답 시 문5로 이동": 원문항의 답이 트리거와
+#       맞으면 원문항과 목표 문항 사이의 문항들을 공란으로 둔다.
+#       트리거가 없는 "문5로 이동"은 적용하지 않는다 (무조건 건너뛰기로
+#       오독할 수 있어 무시한다).
+# ----------------------------------------------------------------------------
+
+_CIRCLED_DIGITS = {"①": 1, "②": 2, "③": 3, "④": 4, "⑤": 5,
+                   "⑥": 6, "⑦": 7, "⑧": 8, "⑨": 9, "⑩": 10}
+
+_BLANK_ANSWER_STRS = {"", "nan", "none", "null", "nat"}
+
+# "없음" 계열 표현 — "없음/없다/없는/없어"는 같은 뜻으로 본다.
+_NONE_WORDS = {"없음", "없다", "없는", "없어", "없으", "없습니다",
+               "없어요", "해당없음", "해당 없음", "없"}
+
+# 부정(스킵) 표현 — 종속 조건의 극성을 뒤집는다.
+_NEGATIVE_MARKERS = ("스킵", "건너뛰", "제외", "생략", "응답하지 않",
+                     "답하지 않", "넘어갑", "건너뜀")
+
+# 긍정 한정 표현 — "…만 응답"은 조건절에 부정어가 붙어도 극성을 뒤집지 않는다.
+# ("문12의 ② 응답자만 응답, 나머지는 스킵"의 "스킵"은 '나머지'를 설명할 뿐,
+#  해당 문항이 답해야 할 조건 자체가 아니다.)
+_POSITIVE_LIMIT_RE = re.compile(r"만\s*(?:응답|답|해당|적용)")
+
+# 조건 연결어 — 부정어가 조건절 안에 있을 때만 극성을 뒤집는다.
+# ("Q12가 없음이면 스킵"의 "이면"은 조건절, "문12의 응답자만 응답, 나머지는
+#  스킵"의 "스킵" 앞에는 조건 연결어가 없어 뒤집지 않는다.)
+_CONDITION_CONNECTORS = ("이면", "으면", "라면", "인 경우", "일 경우",
+                         "응답 시", "응답하면", "인 때", "일 때")
+
+
+def _is_negative_condition(text: str) -> bool:
+    """종속 조건의 극성이 부정인지 (트리거 조건절 안의 부정 표현만 본다).
+
+    "Q12가 없음이면 스킵" → "스킵" 앞 조건절에 "이면"이 있어 True.
+    "문12의 ② 응답자만 응답, 나머지는 스킵" → "만 응답" 긍정 한정이
+    있어 False (서술 전체를 검사하면 정반대로 뒤집히는 오적용).
+    조건절과 무관한 위치의 부정어(연결어 없음)도 False.
+    """
+    if _POSITIVE_LIMIT_RE.search(text):
+        return False
+    for marker in _NEGATIVE_MARKERS:
+        idx = text.find(marker)
+        if idx < 0:
+            continue
+        clause = text[:idx]
+        if any(conn in clause for conn in _CONDITION_CONNECTORS):
+            return True
+    return False
+
+
+def _is_blank_answer(value) -> bool:
+    """공란 판정: None·빈 문자열·공백만·'nan'/'None' 등 결측 표기."""
+    if value is None:
+        return True
+    return str(value).strip().lower() in _BLANK_ANSWER_STRS
+
+
+def _normalize_answer(value) -> str:
+    """답변 비교용 정규화: NFKC + 공백 정리."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value))).strip()
+
+
+def _canonical_none(value: str) -> str:
+    """'없음' 계열 표현을 '없음'으로 통일한다. 아니면 정규화한 값 그대로."""
+    s = _normalize_answer(value)
+    return "없음" if s in _NONE_WORDS else s
+
+
+def _is_zero_number(value: str) -> bool:
+    """'0'·'0명'처럼 0인 숫자·금액 응답인지 (동반인원 0명 = 없음)."""
+    s = str(value).strip().replace(",", "").replace(" ", "")
+    for unit in ("명", "원", "개", "회", "번", "일", "시간", "분", "초", "점", "건"):
+        if s.endswith(unit) and len(s) > len(unit):
+            s = s[: -len(unit)]
+            break
+    try:
+        return float(s) == 0.0
+    except ValueError:
+        return False
+
+
+def _answer_matches(answer, trigger: str, qtype: str | None = None) -> bool:
+    """원문항 답변이 트리거와 맞는지.
+
+    단일선택·리커트 문항은 완전일치만 쓴다 — "그렇다"가 "매우 그렇다"에,
+    "그렇지 않다"가 "전혀 그렇지 않다"에 부분일치로 매칭되는 오판을 막는다.
+    다중선택 문항(type == "multiple")만 구분자(, / ;) 단위 토큰 포함 검사를
+    쓴다 ("A, B" 형태의 답에서 트리거 "A"가 토큰 하나와 완전히 일치하면 맞음).
+    "없음" 계열은 "없음/없다/없는"과 "0명"을 같은 뜻으로 본다.
+    """
+    ans = _normalize_answer(answer)
+    trg = _normalize_answer(trigger)
+    if not ans or not trg:
+        return False
+    ans_none = _canonical_none(ans) == "없음" or _is_zero_number(ans)
+    trg_none = _canonical_none(trg) == "없음" or _is_zero_number(trg)
+    if ans_none and trg_none:
+        return True
+    if ans == trg:
+        return True
+    if qtype == "multiple":
+        tokens = [t.strip() for t in re.split(r"[,;]", ans)]
+        return trg in [_normalize_answer(t) for t in tokens if t]
+    return False
+
+
+def _extract_trigger(branching: str, source_q: dict | None) -> str | None:
+    """branching 서술에서 트리거(원문항의 특정 보기/답)를 뽑는다.
+
+    우선순위: 동그라미 숫자(①→원문항 보기 1번, 서술 등장 순서) → 따옴표 안 문구 →
+    원문항 보기 문구가 서술에 그대로 등장 → "없음 응답 시"처럼
+    '응답 시/인 경우/이면' 바로 앞 단어. 없으면 None
+    (트리거 없음 = '원문항에 답함'이 조건).
+    동그라미 숫자가 있는데 보기와 연결이 안 되면 None을 반환한다
+    (호출부가 _has_unresolvable_trigger()로 규칙 전체를 무시한다).
+    """
+    text = _normalize_answer(branching)
+    if source_q:
+        options = [str(o) for o in source_q.get("options") or []]
+        circled = [(text.index(ch), num)
+                   for ch, num in _CIRCLED_DIGITS.items() if ch in text]
+        if circled:
+            _, num = min(circled)
+            if 1 <= num <= len(options):
+                return options[num - 1]
+            return None
+        quoted = re.search(r"[\"'「]([^\"'」]+)[\"'」]", text)
+        if quoted:
+            return quoted.group(1).strip()
+        for opt in sorted(options, key=len, reverse=True):
+            if opt and _normalize_answer(opt) in text:
+                return opt
+    word_m = re.search(
+        r"([가-힣A-Za-z0-9]+)\s*(?:응답\s*시|응답\s*하면|인\s*경우|이면|일\s*경우)",
+        text)
+    if word_m:
+        return word_m.group(1)
+    return None
+
+
+def _has_unresolvable_trigger(branching: str, source_q: dict | None) -> bool:
+    """트리거를 언급했으나 보기와 연결할 수 없는지 (예: ①인데 보기 없음).
+
+    이 경우 규칙 전체를 무시한다 — 트리거 없는 조건으로 격하하면
+    '① 응답자만'이 '아무나 답함'이 되어 오적용된다.
+    """
+    text = _normalize_answer(branching)
+    options = [str(o) for o in (source_q or {}).get("options") or []]
+    for ch, num in _CIRCLED_DIGITS.items():
+        if ch in text and not (1 <= num <= len(options)):
+            return True
+    return False
+
+
+def _parse_branch_rule(q: dict,
+                       questions_by_id: dict[str, dict]) -> dict | None:
+    """한 문항의 branching 서술을 규칙 dict로 바꾼다. 파싱이 안 되면 None.
+
+    {"kind": "requires" | "requires_not" | "skip_to",
+     "source": 원문항 id, "trigger": 트리거 문자열 또는 None,
+     "target": 목표 문항 id (skip_to만)}
+    """
+    branching = str(q.get("branching") or "").strip()
+    if not branching:
+        return None
+    text = _normalize_answer(branching)
+    qid = q.get("id", "")
+
+    # (B) 건너뛰기: "문5로 이동" / "문5로 넘어감" / "문5로 건너뛰기"
+    move_m = re.search(
+        r"(?:문|Q)\s*(\d+)\s*(?:번\s*)?(?:으로|로)\s*(?:이동|넘어|건너뛰)", text)
+    if move_m:
+        target = f"Q{int(move_m.group(1))}"
+        if target in questions_by_id and target != qid:
+            if _has_unresolvable_trigger(text, q):
+                return None
+            trigger = _extract_trigger(text, q)
+            if trigger is None:
+                return None  # 트리거 없는 건너뛰기는 적용하지 않음
+            return {"kind": "skip_to", "source": qid, "trigger": trigger,
+                    "target": target, "source_type": q.get("type", "")}
+        return None
+
+    # (A) 종속 조건: 언급된 문항 중 자기 자신이 아닌 첫 번째가 원문항.
+    # "Q13은 문12의 응답자만 응답"처럼 자기 번호를 먼저 쓰면 첫 매치가
+    # 자기 자신이므로 건너뛰고 다음 언급을 찾는다 (첫 매치가 자기 자신이면
+    # 규칙이 소실되던 오적용). 자기 자신이 아닌 첫 언급이 목록에 없으면
+    # 규칙을 만들지 않는다.
+    for ref_m in re.finditer(r"(?:문|Q)\s*(\d+)", text):
+        source = f"Q{int(ref_m.group(1))}"
+        if source == qid:
+            continue
+        if source not in questions_by_id:
+            return None
+        source_q = questions_by_id[source]
+        if _has_unresolvable_trigger(text, source_q):
+            return None
+        trigger = _extract_trigger(text, source_q)
+        kind = ("requires_not"
+                if _is_negative_condition(text)
+                else "requires")
+        return {"kind": kind, "source": source, "trigger": trigger,
+                "source_type": source_q.get("type", "")}
+    return None
+
+
+def _describe_branch_rule(qid: str, rule: dict) -> str:
+    """규칙을 사람이 읽을 수 있는 한 줄 설명으로 바꾼다 (메타 표시용)."""
+    if rule["kind"] == "skip_to":
+        return (f"{rule['source']}='{rule.get('trigger')}'이면 "
+                f"{rule['source']}→{rule['target']} 사이 문항 공란")
+    cond = (f"{rule['source']}='{rule.get('trigger')}'"
+            if rule.get("trigger") else f"{rule['source']}에 답함")
+    if rule["kind"] == "requires_not":
+        return f"{qid}는 {cond}가 아닐 때만 응답"
+    return f"{qid}는 {cond}일 때만 응답"
+
+
+def _compile_branch_rules(questions: list[dict]) -> dict:
+    """문항 목록의 branching 서술을 생성 시 적용할 규칙으로 컴파일한다.
+
+    Returns: {"requires": {qid: rule}, "skip_to": {source_qid: rule},
+              "summaries": {qid: 설명},
+              "unparsed": {qid: 파싱에 실패한 branching 원문}}
+    — 파싱이 안 된 문항은 제외된다. "unparsed"는 적용 안 된 분기를
+    last_branch_meta에 경고로 남기기 위한 것으로, 생성 후 확인용이다.
+    """
+    by_id = {q.get("id"): q for q in questions if q.get("id")}
+    requires: dict[str, dict] = {}
+    skip_to: dict[str, dict] = {}
+    summaries: dict[str, str] = {}
+    unparsed: dict[str, str] = {}
+    for q in questions:
+        rule = _parse_branch_rule(q, by_id)
+        if rule is None:
+            branching = str(q.get("branching") or "").strip()
+            if branching:
+                unparsed[q["id"]] = branching
+            continue
+        if rule["kind"] == "skip_to":
+            skip_to[q["id"]] = rule
+        else:
+            requires[q["id"]] = rule
+        summaries[q["id"]] = _describe_branch_rule(q["id"], rule)
+    return {"requires": requires, "skip_to": skip_to, "summaries": summaries,
+            "unparsed": unparsed}
+
+
+def _branch_condition_holds(rule: dict, answers: dict) -> bool:
+    """종속 조건이 맞는지: 원문항에 답했고, 트리거가 있으면 답이 트리거와 맞음."""
+    src_ans = answers.get(rule["source"], "")
+    if _is_blank_answer(src_ans):
+        return False
+    trigger = rule.get("trigger")
+    if trigger is None:
+        return True
+    return _answer_matches(src_ans, trigger, rule.get("source_type"))
+
+
+def _branch_rule_applies(rule: dict, answers: dict) -> bool:
+    """해당 문항에 답해야 하는지 (requires_not은 조건의 반대)."""
+    if rule["kind"] == "requires_not":
+        return not _branch_condition_holds(rule, answers)
+    return _branch_condition_holds(rule, answers)
+
+
+def _skip_trigger_matches(rule: dict, answers: dict) -> bool:
+    """skip_to 규칙: 원문항 답이 트리거와 맞아 건너뛰기가 발동하는지."""
+    src_ans = answers.get(rule["source"], "")
+    if _is_blank_answer(src_ans):
+        return False
+    trigger = rule.get("trigger")
+    if trigger is None:
+        return False  # 트리거 없는 건너뛰기는 발동하지 않음
+    return _answer_matches(src_ans, trigger, rule.get("source_type"))
+
+
+def _questions_between(order: list[str], source: str, target: str) -> list[str]:
+    """문항 순서에서 source와 target 사이에 있는 문항 id 목록 (역방향이면 빈 목록)."""
+    try:
+        i, j = order.index(source), order.index(target)
+    except ValueError:
+        return []
+    if i >= j:
+        return []
+    return order[i + 1:j]
+
+
+# ----------------------------------------------------------------------------
+
 # 가상 응답 생성 (전략 오케스트레이션)
+
 # ----------------------------------------------------------------------------
 class GenerationService:
     def __init__(self, strategy_order: list[str] | None = None) -> None:
@@ -114,6 +436,11 @@ class GenerationService:
         self.last_gen_meta: dict | None = None
         # Nemotron 모드의 원본 샘플링 메타 (쿼터 달성률 상세·완화 목록 포함)
         self.last_nemotron_meta: dict | None = None
+
+        # 분기(branching) 적용 메타 (규칙·공란 처리 건수·문항별 유효 n).
+        # generate_responses()가 채운다.
+        self.last_branch_meta: dict | None = None
+
 
     # Nemotron 모드의 프로필 컬럼 순서 (직접 모드의 persona_dims 대응)
     NEMOTRON_PROFILE_COLS = (
@@ -157,7 +484,14 @@ class GenerationService:
         persona_source="nemotron"이면 Nemotron 발췌본에서 쿼터대로
         페르소나를 추출한다 (응답 생성 로직은 동일). 메타(출처·쿼터
         달성률·완화 기록)는 self.last_gen_meta에 남긴다.
+
+        branching 필드가 있는 문항은 생성 직후 분기 조건을 적용한다:
+        원문항에 답하지 않았거나(공란) 트리거와 맞지 않으면 해당 문항은
+        공란("")으로 둔다. 적용 내역은 self.last_branch_meta와
+        self.last_gen_meta["분기 스킵"]에 남긴다.
+
         """
+
         rng = random.Random(seed)
         learned = learned or {}
         transcripts = transcripts or []
@@ -189,6 +523,13 @@ class GenerationService:
         else:
             self.last_nemotron_meta = None
 
+        # 분기 규칙 컴파일 (문항 목록에서 한 번만 파싱 — 배치마다 반복하지 않음)
+        questions_by_id = {q.get("id"): q for q in questions if q.get("id")}
+        question_order = [q.get("id") for q in questions if q.get("id")]
+        branch = _compile_branch_rules(questions)
+        branch_blanked: dict[str, int] = {}
+
+
         # 문항 → 전략 매칭 (전략별 그룹)
         groups: dict[str, list[dict]] = {}
         for q in questions:
@@ -213,7 +554,37 @@ class GenerationService:
                 for i, ans in enumerate(results):
                     sampled[i].update(ans)
 
+
+            # 분기 적용: 해당 없음 문항을 공란으로 둔다 (전략 무관 단일 지점).
+            # 모든 전략 결과가 sampled에 합쳐진 뒤이므로 전략 종류와 무관하다.
+            if branch["requires"] or branch["skip_to"]:
+
+                for i in range(bsize):
+
+                    for qid, rule in branch["requires"].items():
+
+                        if not _branch_rule_applies(rule, sampled[i]):
+
+                            if not _is_blank_answer(sampled[i].get(qid, "")):
+
+                                sampled[i][qid] = ""
+                                branch_blanked[qid] = branch_blanked.get(qid, 0) + 1
+
+                    for src_qid, rule in branch["skip_to"].items():
+
+                        if _skip_trigger_matches(rule, sampled[i]):
+
+                            for mid_qid in _questions_between(
+                                    question_order, src_qid, rule["target"]):
+
+                                if not _is_blank_answer(sampled[i].get(mid_qid, "")):
+
+                                    sampled[i][mid_qid] = ""
+                                    branch_blanked[mid_qid] = branch_blanked.get(mid_qid, 0) + 1
+
+
             for i, persona in enumerate(personas):
+
                 if persona_source == "nemotron":
                     row = {
                         "프로필_성별": persona.get("sex", ""),
@@ -244,7 +615,35 @@ class GenerationService:
 
         self.last_gen_meta = self._build_gen_meta(
             persona_source, nemotron_meta)
+
+        # 분기 적용 메타: 적용된 규칙·공란 처리 건수·분기 문항별 유효 n.
+        # "분기 스킵"은 app.py가 last_gen_meta를 그대로 화면·엑셀 메타에 합치므로
+        # 별도 UI 수정 없이 표시된다.
+        branched_qids = sorted(
+            set(branch["requires"]) |
+            {mid for rule in branch["skip_to"].values()
+             for mid in _questions_between(question_order, rule["source"],
+                                           rule["target"])})
+        effective_n = {}
+        for qid in branched_qids:
+            if qid in df.columns:
+                effective_n[qid] = int(
+                    df[qid].map(lambda v: not _is_blank_answer(v)).sum())
+        self.last_branch_meta = {
+            "규칙": dict(branch["summaries"]),
+            "공란 처리": dict(branch_blanked),
+            "문항별 유효 n": effective_n,
+            # 파싱에 실패한 branching 원문 — 적용 안 된 분기가 있으면
+            # 여기서 확인한다 (무시이지 오류가 아니므로 경고로만 남긴다).
+            "파싱 실패": dict(branch["unparsed"]),
+        }
+        if branch_blanked:
+            self.last_gen_meta = dict(self.last_gen_meta or {})
+            self.last_gen_meta["분기 스킵"] = "; ".join(
+                f"{qid} {c}건 공란" for qid, c in sorted(branch_blanked.items()))
+
         return df
+
 
     @staticmethod
     def _build_gen_meta(persona_source: str,
@@ -291,9 +690,9 @@ class GenerationService:
             "완화 기록": relax_line,
             "쿼터 정규화": "예" if nemotron_meta.get("normalized") else "아니오",
             "쿼터 방식": ("건수 쿼터" if nemotron_meta.get("quota_mode") == "count"
-                        else "비율 쿼터"),
+                         else "비율 쿼터"),
             "지역 단위": ("시도 (17개)" if nemotron_meta.get("region_level") == "province"
-                        else "권역 (5개)"),
+                         else "권역 (5개)"),
         }
         warning = nemotron_meta.get("count_quota_warning")
         if warning:
@@ -308,7 +707,6 @@ class GenerationService:
                     f"{'|'.join(map(str, t['cell']))} "
                     f"{t['from']}건→{t['to']}건" for t in truncated[:5])
         return meta
-
 
 # ----------------------------------------------------------------------------
 # 엑셀 출력
@@ -346,6 +744,7 @@ class ExportService:
         """파일럿 진단 리포트를 Word(.docx)로 생성.
 
         깔끔한 디자인: 제목, 메타 정보, 진단 결과 표, 방법론 안내 섹션.
+
         """
         from docx import Document
         from docx.shared import Pt, Cm, RGBColor
@@ -353,7 +752,6 @@ class ExportService:
         from docx.enum.table import WD_TABLE_ALIGNMENT
         from docx.oxml.ns import qn
         from datetime import datetime
-
         doc = Document()
 
         # 기본 폰트 설정
@@ -372,7 +770,6 @@ class ExportService:
         run = p.add_run(f"생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         run.font.size = Pt(9)
         run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-
         doc.add_paragraph()  # 여백
 
         # 메타 정보
@@ -403,7 +800,6 @@ class ExportService:
             mid = len(findings) - high
             p = doc.add_paragraph()
             p.add_run(f"총 {len(findings)}건 발견 (높음 {high}건, 중간 {mid}건)")
-
             table = doc.add_table(rows=1, cols=5)
             table.style = "Light Grid Accent 1"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -414,7 +810,6 @@ class ExportService:
                 for par in cell.paragraphs:
                     for r in par.runs:
                         r.bold = True
-
             for f in findings:
                 row = table.add_row().cells
                 row[0].text = str(f.get("문항", ""))
@@ -439,7 +834,6 @@ class ExportService:
                 row.cells[2].width = Cm(4)
                 row.cells[3].width = Cm(4)
                 row.cells[4].width = Cm(2)
-
         doc.add_paragraph()
 
         # 응답 요약 통계
@@ -451,15 +845,26 @@ class ExportService:
                     continue
                 doc.add_heading(q.get("text", qid), level=2)
                 vc = df[qid].astype(str).value_counts()
+                # 공란("")·결측 표기("nan")는 하나의 응답이 아니라 분기 스킵
+                # 등으로 답하지 않은 것이다 — 빈 라벨 행 대신 "해당 없음"
+                # 범주 하나로 합쳐 명시한다 (리뷰 필수 조치 4). 비율의
+                # 분모는 전체 응답자 수 그대로 둔다.
+                blank_total = int(sum(
+                    c for v, c in vc.items() if _is_blank_answer(v)))
+                summary_rows = [
+                    (str(v), c) for v, c in vc.items()
+                    if not _is_blank_answer(v)]
+                if blank_total:
+                    summary_rows.append(("해당 없음", blank_total))
                 table = doc.add_table(rows=1, cols=3)
                 table.style = "Light Grid Accent 1"
                 hdr = table.rows[0].cells
                 hdr[0].text = "응답"
                 hdr[1].text = "건수"
                 hdr[2].text = "비율"
-                for val, cnt in vc.items():
+                for val, cnt in summary_rows:
                     row = table.add_row().cells
-                    row[0].text = str(val)
+                    row[0].text = val
                     row[1].text = str(cnt)
                     row[2].text = f"{cnt/len(df)*100:.1f}%"
                 doc.add_paragraph()
@@ -469,11 +874,9 @@ class ExportService:
         for line in METHODOLOGY_NOTE.strip().split("\n"):
             if line.strip():
                 doc.add_paragraph(line.strip(), style="List Bullet")
-
         buf = io.BytesIO()
         doc.save(buf)
         return buf.getvalue()
-
 
 # ----------------------------------------------------------------------------
 # PDF 설문지 자동 인식
@@ -482,6 +885,7 @@ class PdfQuestionnaireService:
     """PDF 설문지를 업로드하면 AI가 문항을 자동 파싱합니다.
 
     분기문항(스킵 로직)도 인식하여 branching 필드에 저장합니다.
+
     """
 
     # 마지막 자동 인식의 상태를 UI가 간단히 안내할 수 있도록 보관한다.
@@ -504,7 +908,6 @@ class PdfQuestionnaireService:
         """HWPX(한글 문서)에서 텍스트를 추출합니다. (표준 라이브러리만 사용)"""
         import zipfile
         import xml.etree.ElementTree as ET
-
         texts = []
         with zipfile.ZipFile(io.BytesIO(hwpx_bytes)) as z:
             section_files = sorted(
@@ -535,7 +938,6 @@ class PdfQuestionnaireService:
         import re
         import struct
         import olefile
-
         def _scan_text_runs(data: bytes) -> list[str]:
             """UTF-16LE 한글/영문 텍스트 런 스캔 (fallback용)."""
             text = data.decode("utf-16-le", errors="ignore")
@@ -560,12 +962,10 @@ class PdfQuestionnaireService:
             """FIB/피스테이블 기반 구조적 파싱. 실패 시 예외."""
             u16 = lambda o: struct.unpack("<H", data[o:o + 2])[0]
             u32 = lambda o: struct.unpack("<I", data[o:o + 4])[0]
-
             is_complex = bool(u16(0x0A) & 0x0004)
             ccp_text = u32(0x4C)
             if ccp_text <= 0 or ccp_text > 10_000_000:
                 raise ValueError("ccpText 비정상")
-
             out_parts: list[str] = []
             if is_complex:
                 # fcClx/lcbClx: FibRgFcLcb97 시작(0x94) + 35번째 쌍
@@ -617,7 +1017,6 @@ class PdfQuestionnaireService:
             else:
                 # 단순 문서: fallback 스캔에 맡김
                 raise ValueError("단순 문서 — 스캔 방식 사용")
-
             text = "".join(out_parts)
             # 제어문자 정리
             text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
@@ -668,7 +1067,6 @@ class PdfQuestionnaireService:
     def extract_docx_text(docx_bytes: bytes) -> str:
         """Word(.docx)에서 텍스트를 추출합니다."""
         from docx import Document
-
         doc = Document(io.BytesIO(docx_bytes))
         parts = []
         for para in doc.paragraphs:
@@ -710,6 +1108,7 @@ class PdfQuestionnaireService:
 
         문항과 보기 목록이 경계에서 분리되는 것을 줄이기 위해 overlap을
         둔다. 입력이 짧으면 원문을 그대로 한 구간으로 반환한다.
+
         """
         normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         normalized = normalized.replace("\f", "\n").strip()
@@ -719,7 +1118,6 @@ class PdfQuestionnaireService:
             raise ValueError("QUESTIONNAIRE_PARSE_CHUNK_CHARS는 1 이상이어야 합니다.")
         if len(normalized) <= max_chars:
             return [normalized]
-
         overlap = max(0, min(overlap_chars, max_chars - 1))
         chunks: list[str] = []
         start = 0
@@ -755,7 +1153,6 @@ class PdfQuestionnaireService:
 구간 경계에서 잘린 문항은 추측해서 만들지 말고 제외하세요. 겹치는 다음 구간에
 완전한 문항이 다시 나타날 수 있습니다. 이 구간에서 완전히 확인되는 문항만 반환하세요."""
         return f"""다음은 설문지에서 추출한 텍스트입니다. 설문 문항을 JSON 배열로 파싱하세요.
-
 규칙:
 1. 각 문항은 {{"text": "문항 내용", "type": "single|multi|likert|open", "options": ["보기1", "보기2", ...], "branching": "분기 설명 또는 빈 문자열"}} 형태입니다.
 2. type 판단 기준:
@@ -768,7 +1165,6 @@ class PdfQuestionnaireService:
 4. 보기 번호(①②③, 1. 2. 3. 등)는 제거하고 보기 내용만 추출하세요.
 5. 설문 안내문, 표지, 인구통계 안내 등은 문항에서 제외하세요.
 6. JSON 배열만 출력하고 다른 설명은 붙이지 마세요.{segment_note}
-
 --- 설문지 텍스트 ---
 {text}
 --- 끝 ---"""
@@ -809,7 +1205,6 @@ class PdfQuestionnaireService:
     def _parse_chunk(cls, chunk_text: str, provider_id: str,
                      chunk_index: int, chunk_total: int) -> list[dict]:
         from .providers import generate
-
         result = generate(
             provider_id,
             cls._parse_prompt(chunk_text, chunk_index, chunk_total),
@@ -851,7 +1246,6 @@ class PdfQuestionnaireService:
         }
         if not chunks:
             return []
-
         parsed: list[dict] = []
         last_error: Exception | None = None
         for index, chunk in enumerate(chunks, start=1):
@@ -866,10 +1260,8 @@ class PdfQuestionnaireService:
                 # 한 구간의 일시적 실패가 전체 설문 인식을 막지 않게 한다.
                 cls.last_parse_stats["failed_chunks"] += 1
                 last_error = exc
-
         if not parsed and last_error is not None:
             raise last_error
-
         # 겹치는 구간에서 중복 인식된 문항 제거. 최초 등장 순서는 유지한다.
         unique: list[dict] = []
         seen: set[str] = set()

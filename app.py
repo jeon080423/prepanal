@@ -8,7 +8,7 @@
 처리하고, 상태 접근은 Store 인터페이스(SessionStore)를 통한다.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import hashlib
@@ -20,11 +20,93 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from config import (AGE_BANDS, APP_TITLE, DEFAULT_PERSONA, DISCLAIMER,
-                    METHODOLOGY_NOTE, NEMOTRON_ALL_FACETS, NEMOTRON_ATTRIBUTION,
+                    MAX_RESPONDENTS, METHODOLOGY_NOTE, NEMOTRON_ALL_FACETS,
+                    NEMOTRON_ATTRIBUTION,
                     NEMOTRON_EXTRACT_RELEASE_DATE, NEMOTRON_EXTRACT_SIZE,
                     NEMOTRON_EXTRACT_VERSION, NEMOTRON_FACETS,
                     NEMOTRON_FACET_LABELS, NEMOTRON_PROVINCES, PERSONA_SOURCES,
-                    REGION_MAP, SAMPLE_XLSX_PATH)
+                    PROVIDER_SPECS, REGION_MAP, SAMPLE_XLSX_PATH)
+# ----------------------------------------------------------------------------
+# 시간 기준: 앱에서 만드는 모든 시각은 KST (B-2)
+# Streamlit Cloud 서버는 UTC라 datetime.now()를 그대로 쓰면 저장 시각이
+# 9시간 어긋나게 보인다. 시트 created_at/updated_at는 core 저장소가 찍으므로
+# (core/sheets_projects.py, core/projects.py의 datetime.now()) 그쪽 수정이
+# 별도로 필요하다. 기존 시트에 이미 UTC로 찍힌 값은 바꾸지 않는다.
+# ----------------------------------------------------------------------------
+KST = timezone(timedelta(hours=9))
+
+
+def _now_kst() -> datetime:
+    """현재 시각을 KST로 반환."""
+    return datetime.now(KST)
+
+
+def _fmt_kst_now() -> str:
+    """현재 시각을 KST 'YYYY-MM-DD HH:MM' 문자열로 반환."""
+    return _now_kst().strftime("%Y-%m-%d %H:%M")
+
+
+def _escape_markdown_label(text: str) -> str:
+    """마크다운으로 렌더링되는 라벨·문구에서 '~'를 이스케이프한다.
+
+    st.expander 라벨과 st.write는 마크다운으로 렌더링되므로, 보기 안에 '~'가
+    두 번 들어간 문항("2~3개월에 한 번, 4~5개월에 한 번")은 '~~...~~' 취소선
+    쌍으로 파싱돼 중간 텍스트에 취소선이 생긴다 (Q10·Q18 확인). '~' 앞에
+    백슬래시를 넣어 쌍을 깨뜨리면 화면에는 '~' 그대로 보인다.
+    question_summary() 자체는 건드리지 않는다 — 엑셀·파일 등 비마크다운
+    용도에서는 백슬래시가 그대로 남기 때문이다.
+    """
+    return str(text).replace("~", "\\~")
+
+
+# 이론 다이얼로그의 제공자별 모델 안내를 config.PROVIDER_SPECS에서 동적 생성한다
+# (리뷰 필수 조치 1: B-7(b)가 하드코딩한 구 모델 ID가 워커 A의 새 모델 목록과
+# 충돌해 존재하지 않는 모델을 기본값이라 안내하는 거짓 안내가 됐던 교훈).
+# 모델 ID·기본값·설명·출처·키 이름은 전부 PROVIDER_SPECS에서 읽으므로, 모델 목록이
+# 바뀌면 이 안내도 함께 바뀐다. "제공:" 표시명만 여기에 둔다 (config에 없는 문구).
+_THEORY_PROVIDER_LABELS = {
+    "gemini": "Google AI",
+    "groq": "Groq",
+    "cloudflare": "Cloudflare",
+    "sambanova": "SambaNova",
+}
+
+_THEORY_CIRCLED = ("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧")
+
+
+def _theory_models_markdown() -> str:
+    """제공자별 사용 모델 안내를 PROVIDER_SPECS에서 동적 생성한다.
+
+    반환값은 st.markdown에 넣을 마크다운 조각이다. 제공자가 늘어나면
+    PROVIDER_SPECS 순서대로 ①②③… 번호가 붙고, (기본값) 표기는
+    spec["default_model"]과 일치하는 모델에만 붙는다.
+    """
+    lines: list[str] = []
+    for idx, (pid, spec) in enumerate(PROVIDER_SPECS.items()):
+        num = (_THEORY_CIRCLED[idx] if idx < len(_THEORY_CIRCLED)
+               else f"{idx + 1}.")
+        provider = _THEORY_PROVIDER_LABELS.get(pid, spec.get("label", pid))
+        lines.append(f"**{num} {spec.get('label', pid)} 모델 (제공: {provider})**")
+        for model in spec.get("models", []):
+            mid = model.get("id", "")
+            default = " (기본값)" if mid == spec.get("default_model") else ""
+            lines.append(f"- `{mid}`{default}: {model.get('description', '')}")
+        models = spec.get("models", [])
+        if models:
+            lines.append(f"- 출처: {models[0].get('source', '')}")
+        secret = spec.get("secret_name", "")
+        if secret:
+            lines.append(
+                f"- API 키: Streamlit Secrets의 `{secret}` 사용 "
+                "(또는 사용자 직접 입력)")
+        account_secret = spec.get("account_id_secret", "")
+        if account_secret:
+            lines.append(
+                f"- 계정 ID: Streamlit Secrets의 `{account_secret}` 사용")
+        lines.append("")
+    return "\n".join(lines)
+
+
 try:
     from hero_illustration_b64 import HERO_ILLUSTRATION_B64
 except Exception:
@@ -119,7 +201,8 @@ def verify_access_code(code: str) -> tuple[bool, str]:
         return False, "서버에 액세스 코드가 설정되지 않았습니다."
     if code == expected:
         st.session_state["access_granted"] = True
-        # 코드 입력 직후에는 기존 작업이 아닌 빈 상태로 시작
+        # 코드 입력 직후에는 _fresh_after_verify 플래그를 세운다.
+        # 기존 '새 프로젝트' 행이 있으면 내용을 불러오고, 없을 때만 빈 상태로 시작한다 (B-1).
         st.session_state["_fresh_after_verify"] = True
         return True, "코드가 확인되었습니다."
     return False, "코드가 올바르지 않습니다."
@@ -180,8 +263,15 @@ def _state_fingerprint(state: dict) -> str:
 
 
 def _autosave_current_project():
-    """단계 이동 시 자동 저장. 저장 실패는 무시하고 이동을 계속한다."""
+    """단계 이동 시 자동 저장. 저장 실패는 무시하고 이동을 계속한다.
+
+    이미 저장된 상태면 쓰지 않는다. 이동만으로 시트를 다시 쓰면
+    updated_at·저장 시각이 편집 없이도 바뀌고(B-4 flicker), 빈 상태로
+    덮어쓸 여지도 남는다.
+    """
     try:
+        if _is_current_state_saved():
+            return
         save_fn = globals().get("_save_current_project")
         if save_fn is not None and is_code_verified() and store.get("project_id"):
             save_fn()
@@ -203,6 +293,56 @@ def _is_current_state_saved() -> bool:
         return _state_fingerprint(_current_state_snapshot()) == saved_fp
     except Exception:
         return False
+
+
+def _persona_configured() -> bool:
+    """페르소나 설계가 유효한 분포로 채워져 있는지 반환 (B-3 완료 판정용).
+
+    Nemotron: 쿼터가 있고, 비율 모드면 차원별 합계가 100%, 건수 모드면
+    셀 1개 이상. 직접 설정: 모든 차원의 합계가 100%. 쿼터는 2단계
+    화면이 처음 렌더링될 때 기본값(발췌본 분포)으로 채워지므로, 2단계를
+    한 번이라도 연 프로젝트는 Nemotron 기본값으로 유효 판정이 된다.
+    """
+    source = store.get("persona_source") or "nemotron"
+    if source == "manual":
+        dims = store.get("persona_dims") or {}
+        if not dims:
+            return False
+        for cats in dims.values():
+            if not isinstance(cats, dict) or not cats:
+                return False
+            if abs(sum(cats.values()) - 100.0) > 0.01:
+                return False
+        return True
+    quotas = store.get("nemotron_quotas")
+    if not quotas:
+        return False
+    if (store.get("nemotron_quota_mode") or "ratio") == "count":
+        return bool(store.get("nemotron_count_quotas"))
+    for cats in quotas.values():
+        if isinstance(cats, dict) and cats:
+            if abs(sum(cats.values()) - 100.0) > 0.01:
+                return False
+    return True
+
+
+def _step_completion() -> dict[int, bool]:
+    """단계별 실제 완료 여부 (B-3). 위치(step)가 아니라 산출물 기준으로 판정한다.
+
+    1 설문 설계: 문항 1개 이상. 2 페르소나 설계: 유효한 분포
+    (_persona_configured). 3 분포 학습: 학습된 분포 존재(선택 단계라
+    비워 두면 미완료로 남는다). 4 가상 응답 생성·5 결과: 생성된 결과 존재.
+    스테퍼·주 메뉴·작업 순서 가이드가 이 하나를 공용으로 써서 표기가
+    어긋나지 않는다.
+    """
+    has_results = store.get("results_df") is not None
+    return {
+        1: len(store.get("questions") or []) > 0,
+        2: _persona_configured(),
+        3: store.get("learned") is not None,
+        4: has_results,
+        5: has_results,
+    }
 
 # ----------------------------------------------------------------------------
 # 이론적 배경 (팝업 다이얼로그)
@@ -269,26 +409,13 @@ LLM으로부터 추출한 뒤 샘플링합니다.
         """
 본 도구는 외부 상용 LLM API를 호출하여 합성 응답을 생성합니다.
 모델 가중치를 직접 학습(파인튜닝)하지 않으며, 프롬프트 엔지니어링 + 확률분포 샘플링 방식입니다.
-사용자는 4단계 'AI 선택'에서 제공자(Gemini/OpenAI)와 모델을 직접 고를 수 있으며,
+사용자는 4단계 'AI 선택'에서 제공자(Gemini/Groq/Cloudflare/SambaNova)와 모델을 직접 고를 수 있으며,
 선택한 모델이 실제 생성에 사용됩니다.
 
-**① Gemini 모델 (제공: Google AI)**
-- `gemini-2.5-flash-lite` (기본값): 2.5 패밀리 중 가장 빠르고 저렴. 대량 생성·파일럿 테스트에 적합. 무료 등급 지원.
-- `gemini-2.5-flash`: 속도와 성능의 균형. 추론이 필요한 작업에 적합한 가성비 모델.
-- `gemini-2.5-pro`: 2.5 패밀리 최고 성능. 복잡한 추론·코딩에 강함. 무료 등급 할당량이 적어 429가 날 수 있음.
-- `gemini-3-flash-preview`: 차세대 Flash 모델. 무료 티어 제공. Preview 버전이라 스펙이 변경될 수 있음.
-- 출처: Google AI 공식 문서 (ai.google.dev/gemini-api/docs/models)
-- API 키: Streamlit Secrets의 `GEMINI_API_KEY` 사용 (또는 사용자 직접 입력)
-
-**② OpenAI 모델 (제공: OpenAI)**
-- `gpt-4o-mini` (기본값): 가장 저렴한 범용 모델. 대부분의 작업에 충분.
-- `gpt-4o`: 범용 고성능 모델. 비전·코딩 포함 복잡한 작업에 적합.
-- `gpt-4.1-mini`: 1M 컨텍스트. 성능과 비용의 균형.
-- `gpt-4.1`: 1M 컨텍스트. 복잡한 추론·코딩·지시 이행에 강함.
-- 출처: OpenAI 공식 문서 (platform.openai.com/docs/models)
-- API 키: Streamlit Secrets의 `OPENAI_API_KEY` 사용 (또는 사용자 직접 입력, 유료)
-
-**③ 생성 전략 (4종)**
+"""
+        + _theory_models_markdown()
+        + """
+**⑤ 생성 전략 (4종)**
 
 | 전략 | 조건 | 동작 방식 |
 |------|------|-----------|
@@ -297,13 +424,13 @@ LLM으로부터 추출한 뒤 샘플링합니다.
 | 정밀생성 전략 | 인터뷰 모드 | 분포추출 전략을 상속, 인터뷰 트랜스크립트 기반 정교한 페르소나 컨텍스트 사용 |
 | 주관식 생성 | 주관식 문항 | LLM 배치 호출로 자유 텍스트 직접 생성 |
 
-**④ 페르소나 시뮬레이션 원리**
+**⑥ 페르소나 시뮬레이션 원리**
 1. 2단계에서 설정한 인구통계 분포(성별/연령대/지역/직업)에서 각 가상 응답자의 프로필을 샘플링
 2. 4단계에서 각 프로필을 LLM 프롬프트에 포함 ("당신은 30대 여성 서울 거주 직장인입니다...")
 3. 선택형 문항: LLM이 각 보기의 선택 확률을 반환 → 확률에 따라 샘플링
 4. 주관식 문항: 프로필을 조건으로 자유 텍스트 직접 생성
 
-**⑤ 토큰 소모 (참고)**
+**⑦ 토큰 소모 (참고)**
 - 응답자 1명당 약 950 토큰 (입력 750 + 출력 200)
 - 1,000명 생성 시 약 95만 토큰
 - Gemini 무료 등급 일일 한도: 150만 토큰
@@ -807,7 +934,10 @@ def _save_current_project():
     _project_store.save_project(pid, state)
     # 저장 상태 기록 (지속 표시·dirty 판정용)
     st.session_state["_last_saved_pid"] = pid
-    st.session_state["_last_saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    st.session_state["_last_saved_at"] = _fmt_kst_now()
+    # 이 시각은 앱이 KST로 찍은 값이다. 시트에서 읽어온 updated_at과는
+    # 출처가 다르므로 표시 시 'KST'를 붙인다 (B-2).
+    st.session_state["_last_saved_at_kst"] = True
     st.session_state["_last_saved_fp"] = _state_fingerprint(state)
 
 
@@ -856,18 +986,29 @@ def _load_project_to_store(pid: str):
         st.session_state["_last_saved_at"] = (
             _project_store.get_meta(pid).get("updated_at", "")
         )
+        # 시트에 찍힌 updated_at은 core 저장소가 서버 시각(UTC)으로 기록한
+        # 값이라 KST 표기를 붙이지 않는다. 다음 저장부터 KST로 기록된다 (B-2).
+        st.session_state["_last_saved_at_kst"] = False
     except Exception:
         st.session_state["_last_saved_at"] = ""
+        st.session_state["_last_saved_at_kst"] = False
 
 
 # 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
-# 단, 액세스 코드 입력 전/직후에는 기존 작업을 불러오지 않고 기본 페이지로 시작
+# 코드 입력 직후에는 '새 프로젝트' 행이 있으면 그 내용을 불러오고,
+# 없을 때만 새로 만든다. 빈 상태로 기존 행을 덮어쓰지 않는다 (B-1).
 projects = _project_store.list_projects()
 current_pid = store.get("project_id")
 project_ids = [p["id"] for p in projects]
 if st.session_state.pop("_fresh_after_verify", False):
-    # 코드 입력 직후: 빈 새 프로젝트를 생성해 기본 페이지로 시작
-    # 같은 이름이 이미 있으면 기존 것을 재사용 (중복 생성 방지)
+    # 코드 입력 직후: 기존 '새 프로젝트' 행이 있으면 그 내용을 불러오고,
+    # 없을 때만 새로 만든다. 빈 상태로 기존 행을 덮어쓰지 않는다 (B-1).
+    # 배경: SheetsProjectStore.save_project()는 기존 행의 E:Z를 지우고
+    # 현재 상태를 통째로 쓰므로, 기존 행을 재사용하면서 빈 상태를 세팅한 뒤
+    # goto()/goto_page()의 자동 저장이 돌면 저장된 데이터가 사라진다.
+    # 그래서 재사용 경로는 _load_project_to_store()로 기존 내용을 불러오고,
+    # 빈 상태 세팅은 '새로 만든 직후'에만 한다.
+    _fresh_is_new = True
     try:
         new_pid = _project_store.create_project("새 프로젝트")
     except ValueError:
@@ -875,28 +1016,47 @@ if st.session_state.pop("_fresh_after_verify", False):
         new_pid = existing[0]["id"] if existing else project_ids[0] if project_ids else None
         if new_pid is None:
             # 프로젝트가 하나도 없으면 타임스탬프로 고유 이름 생성
-            from datetime import datetime
             new_pid = _project_store.create_project(
-                f"새 프로젝트 {datetime.now().strftime('%m%d-%H%M')}"
+                f"새 프로젝트 {_now_kst().strftime('%m%d-%H%M')}"
             )
-    store.set("project_id", new_pid)
-    store.set("questions", [])
-    store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
-    store.set("persona_source", "nemotron")
-    store.set("nemotron_quotas", None)
-    store.set("nemotron_quota_mode", "ratio")
-    store.set("nemotron_count_quotas", None)
-    store.set("nemotron_region_level", "region")
-    store.set("nemotron_facets", None)
-    store.set("transcripts", [])
-    store.set("use_precision", False)
-    store.set("learned", None)
-    store.set("learned_file", None)
-    store.set("results_df", None)
-    store.set("gen_meta", None)
-    store.set("gen_cache", {})
-    store.set("step", 1)
-    store.set("page", "step1")
+        else:
+            _fresh_is_new = False
+    if _fresh_is_new:
+        store.set("project_id", new_pid)
+        store.set("questions", [])
+        store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+        store.set("persona_source", "nemotron")
+        store.set("nemotron_quotas", None)
+        store.set("nemotron_quota_mode", "ratio")
+        store.set("nemotron_count_quotas", None)
+        store.set("nemotron_region_level", "region")
+        store.set("nemotron_facets", None)
+        store.set("transcripts", [])
+        store.set("use_precision", False)
+        store.set("learned", None)
+        store.set("learned_file", None)
+        store.set("results_df", None)
+        store.set("gen_meta", None)
+        store.set("gen_cache", {})
+        store.set("step", 1)
+        store.set("page", "step1")
+        # 새로 만든 빈 프로젝트는 빈 상태가 곧 저장된 상태다. 저장 지점을
+        # 지금 기록해 두면 직후 자동 저장이 빈 상태로 시트를 다시 쓰는
+        # 일을 하지 않고, dirty 판정도 바로 안정된다 (B-4 flicker 방지).
+        st.session_state["_last_saved_pid"] = new_pid
+        st.session_state["_last_saved_at"] = _fmt_kst_now()
+        st.session_state["_last_saved_at_kst"] = True
+        try:
+            st.session_state["_last_saved_fp"] = _state_fingerprint(
+                _current_state_snapshot()
+            )
+        except Exception:
+            st.session_state["_last_saved_fp"] = ""
+    else:
+        # 기존 행 재사용: 빈 값으로 세팅하지 않고 저장된 내용을 그대로 불러온다.
+        # _load_project_to_store()가 저장 지점(_last_saved_pid/_last_saved_fp)도
+        # 함께 기록하므로, 직후 자동 저장은 불러온 내용과 동일한 상태를 쓴다.
+        _load_project_to_store(new_pid)
     projects = _project_store.list_projects()
     current_pid = new_pid
 elif not is_code_verified():
@@ -968,7 +1128,7 @@ def _report_mockup_html():
         ("1", "설문 설계", "문항·보기 인식", True),
         ("2", "페르소나 설계", "분포 설정", True),
         ("3", "분포 학습", "분포 반영", True),
-        ("4", "가상 응답 생성", "10,000건 생성", True),
+        ("4", "가상 응답 생성", "최대 200건 생성", True),
         ("5", "결과", "진단 리포트", False),  # 현재 화면
     ]
     step_rows = []
@@ -1033,11 +1193,11 @@ def _report_mockup_html():
         "</span></div>"
         '<div style="font-size:16px; font-weight:800; color:#17242C; margin-top:8px;">파일럿 진단 리포트</div>'
         '<div style="font-size:11.5px; color:#5A6E6B; margin-top:2px;">'
-        "가상 응답 10,000건을 기반으로 설문 품질을 진단했습니다.</div>"
+        "가상 응답 최대 200건을 기반으로 설문 품질을 진단했습니다.</div>"
         '<div class="pp-mockup-cards" style="display:flex; gap:10px; margin-top:8px;">'
         '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
         '<div style="font-size:11px; color:#5A6E6B;">가상 응답</div>'
-        '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">10,000건</div></div>'
+        '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">최대 200건</div></div>'
         '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
         '<div style="font-size:11px; color:#5A6E6B;">진단 단계</div>'
         '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">5단계</div></div>'
@@ -1133,7 +1293,13 @@ def _render_landing():
             unsafe_allow_html=True,
         )
     with nav_login:
-        if st.button("로그인", key="landing_login_btn", use_container_width=True):
+        if is_code_verified():
+            # 로그인 상태에서 랜딩으로 돌아와도 '로그인' 버튼이 그대로 보이면
+            # 혼란스럽다. 로그인 상태 표시로 바꾸고, 누르면 앱으로 복귀한다 (B-6).
+            if st.button("👤 내 계정", key="landing_account_btn", use_container_width=True):
+                st.session_state["show_landing"] = False
+                st.rerun()
+        elif st.button("로그인", key="landing_login_btn", use_container_width=True):
             _enter_app()
     st.divider()
     # 히어로: 좌 텍스트 + 우 리포트 목업
@@ -1151,7 +1317,7 @@ def _render_landing():
             '<span style="background:linear-gradient(transparent 62%, #9ADCD0 62%);">응답을 먼저</span> '
             "만나보세요.</div>"
             '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.6rem;">'
-            "10,000명의 가상 페르소나가 설문에 응답합니다.</div>"
+            "10,000명의 가상 페르소나 풀에서 최대 200명이 설문에 응답합니다.</div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -1168,13 +1334,13 @@ def _render_landing():
             )
     with _hero_r:
         st.markdown(_report_mockup_html(), unsafe_allow_html=True)
-    # 수치 스트립 (검증된 내용만: 10,000건·5단계·17개 시도·CC BY 4.0)
+    # 수치 스트립 (검증된 내용만: 페르소나 풀 10,000명·5단계·17개 시도·CC BY 4.0 — 생성은 최대 200건)
     st.markdown(
         '<div class="pp-stats" style="display:flex; background:#E4F2ED; border-radius:14px; '
         'margin-top:0.8rem; padding:0.9rem 0.4rem;">'
         '<div style="flex:1; text-align:center;">'
         '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">10,000명</div>'
-        '<div style="font-size:12px; color:#5A6E6B;">가상 페르소나 응답</div></div>'
+        '<div style="font-size:12px; color:#5A6E6B;">가상 페르소나 풀</div></div>'
         '<div style="flex:1; text-align:center;">'
         '<div style="font-size:1.35rem; font-weight:800; color:#176F68; white-space:nowrap;">5단계</div>'
         '<div style="font-size:12px; color:#5A6E6B;">설계부터 결과까지</div></div>'
@@ -1202,7 +1368,7 @@ def _render_landing():
                 ' <span style="font-size:1.05rem; font-weight:800; color:#17242C;">설문 가져오기</span>',
                 unsafe_allow_html=True,
             )
-            st.caption("이미 만든 설문을 그대로 업로드하거나, 링크를 붙여넣어 간편하게 불러올 수 있습니다.")
+            st.caption("이미 만든 설문을 그대로 업로드해 간편하게 불러올 수 있습니다. (PDF·HWPX·DOC·DOCX)")
             st.markdown(
                 '<div style="display:flex; gap:8px; align-items:center; margin-top:10px;">'
                 '<div style="flex:1; background:#FFFFFF; border:1.5px dashed #BFE3DA; border-radius:10px; '
@@ -1216,8 +1382,8 @@ def _render_landing():
                 'font-size:9px; font-weight:800; display:inline-flex; align-items:center; justify-content:center;">✓</span>'
                 '<span style="font-size:10px; color:#5A6E6B;">문항 인식 완료</span></div></div>'
                 '<div style="display:flex; flex-direction:column; gap:6px;">'
-                '<span style="background:#2E7D32; color:#FFFFFF; font-size:10px; font-weight:800; '
-                'border-radius:6px; padding:4px 8px; text-align:center;">XLSX</span>'
+                '<span style="background:#6A1B9A; color:#FFFFFF; font-size:10px; font-weight:800; '
+                'border-radius:6px; padding:4px 8px; text-align:center;">HWPX</span>'
                 '<span style="background:#1565C0; color:#FFFFFF; font-size:10px; font-weight:800; '
                 'border-radius:6px; padding:4px 8px; text-align:center;">DOCX</span>'
                 '<span style="background:#C62828; color:#FFFFFF; font-size:10px; font-weight:800; '
@@ -1233,7 +1399,7 @@ def _render_landing():
                 ' <span style="font-size:1.05rem; font-weight:800; color:#17242C;">가상 응답 생성</span>',
                 unsafe_allow_html=True,
             )
-            st.caption("다양한 인구통계와 행동 특성을 가진 10,000명의 AI 가상 페르소나가 설문에 응답합니다.")
+            st.caption("다양한 인구통계와 행동 특성을 가진 AI 가상 페르소나 풀(10,000명)에서 최대 200명이 설문에 응답합니다.")
             st.markdown(
                 '<div style="display:flex; justify-content:center; gap:10px; margin-top:12px;">'
                 '<div style="width:52px; height:52px; border-radius:50%; background:#E4F2ED; '
@@ -1260,7 +1426,7 @@ def _render_landing():
                 "</div>"
                 '<div style="text-align:center; margin-top:10px;">'
                 '<span style="font-size:11px; font-weight:700; color:#176F68; background:#E4F2ED; '
-                'border-radius:999px; padding:3px 10px;">가상 페르소나 10,000명 ✓</span></div>',
+                'border-radius:999px; padding:3px 10px;">가상 응답 최대 200건 ✓</span></div>',
                 unsafe_allow_html=True,
             )
     with _f3:
@@ -1531,7 +1697,7 @@ def ai_settings_dialog():
 def _render_header():
     """상단 헤더 (Qualtrics 카피) — 로고 + 주 메뉴 팝오버 + 저장 + 도움말 + 내 계정.
 
-    주 메뉴: 5개 단계(스테퍼와 같은 goto 이동) + 프로젝트 관리·업데이트 기록
+    주 메뉴: 5개 단계(스테퍼와 같은 goto 이동) + 제품 소개 + 프로젝트 관리·업데이트 기록 (총 8개)
     (별도 페이지로 이동). 내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
     알림 종·전환기는 해당 기능이 없어 넣지 않는다.
     """
@@ -1548,25 +1714,39 @@ def _render_header():
         except Exception:
             _proj_name = ""
         _proj_line = (
-            f'<div style="font-size:12px; color:#176F68; font-weight:700; margin-top:1px;">'
+            f'<div style="font-size:12px; color:#176F68; font-weight:700; margin-top:2px; line-height:1.4;">'
             f"📁 {_proj_name}</div>"
             if _proj_name
             else ""
         )
         st.markdown(
-            '<div style="display:flex; align-items:baseline; gap:10px;">'
-            '<span style="font-size:20px; font-weight:800; color:#176F68;">MetriX</span>'
-            '<span style="font-size:15px; font-weight:700;">AI 합성응답자 기반 Pre-test</span>'
+            # 부제 겹침 수정 (B-8): 제목·부제·프로젝트명을 세로 flex 컬럼으로
+            # 나누고 음수 마진(margin-top:-2px)을 없앴다. 제목 줄이 좁은
+            # 헤더 컬럼에서 줄바꿈돼도 부제가 위로 당겨지지 않는다.
+            '<div style="display:flex; flex-direction:column; line-height:1.4;">'
+            '<div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;">'
+            '<span style="font-size:20px; font-weight:800; color:#176F68; white-space:nowrap;">MetriX</span>'
+            '<span style="font-size:15px; font-weight:700; white-space:nowrap;">AI 합성응답자 기반 Pre-test</span>'
             "</div>"
-            '<div style="font-size:12px; color:#5A6E6B; margin-top:-2px;">'
+            '<div style="font-size:12px; color:#5A6E6B; margin-top:2px; line-height:1.4;">'
             "Synthetic Respondent Pre-Test</div>" + _proj_line,
             unsafe_allow_html=True,
         )
     with c_menu:
-        with st.popover("☰ 주 메뉴", use_container_width=True):
+        # 페이지 이동 시 드롭다운이 닫히게 키를 페이지·단계에 묶는다 (B-5).
+        # 키가 바뀌면 팝오버가 새로 마운트돼 닫힌 상태로 시작한다.
+        # (requirements.txt의 streamlit은 버전 고정이 없어 최신 버전이
+        # 설치되므로 popover의 key 인자를 쓸 수 있다.)
+        with st.popover(
+            "☰ 주 메뉴",
+            key=f"main_menu_{store.get('page')}_{store.get('step')}",
+            use_container_width=True,
+        ):
             current_step = store.get("step")
+            _menu_done = _step_completion()
             for step_number, step_name in enumerate(STEPS, start=1):
-                mark = "✓ " if step_number < current_step else ""
+                # 완료 표기는 위치가 아니라 실제 완료 기준 (B-3).
+                mark = "✓ " if _menu_done.get(step_number) and step_number != current_step else ""
                 if st.button(
                     f"{mark}{step_number}. {step_name}",
                     key=f"mainmenu_step_{step_number}",
@@ -1609,13 +1789,18 @@ def _render_header():
 
 
 def _render_stepper():
-    """1~5단계 진행 표시 (완료 ✓ · 현재 · 예정). 버튼을 누르면 해당 단계로 이동한다."""
+    """1~5단계 진행 표시 (완료 ✓ · 현재 · 예정). 버튼을 누르면 해당 단계로 이동한다.
+
+    완료 여부는 현재 단계보다 앞에 있느냐가 아니라 _step_completion()의
+    실제 완료 기준이다 (B-3). 현재 단계는 완료됐어도 '현재'로 표시한다.
+    """
     current_step = store.get("step")
+    done = _step_completion()
     cols = st.columns(5)
     for step_number, step_name in enumerate(STEPS, start=1):
         status = (
-            "complete" if step_number < current_step
-            else "current" if step_number == current_step
+            "current" if step_number == current_step
+            else "complete" if done.get(step_number)
             else "upcoming"
         )
         mark = "✓ " if status == "complete" else ""
@@ -1724,7 +1909,7 @@ def step1():
                         st.error(f"처리 중 오류: {e}")
 
     for idx, q in enumerate(questions):
-        with st.expander(q_service.question_summary(q), expanded=False):
+        with st.expander(_escape_markdown_label(q_service.question_summary(q)), expanded=False):
             new_text = st.text_input("문항 내용", value=q["text"], key=f"qtext_{question_namespace}_{q['id']}")
             if new_text != q["text"]:
                 q["text"] = new_text
@@ -1988,11 +2173,14 @@ def step2():
         store.set("persona_source", source)
         st.rerun()
     if source == "nemotron":
-        st.caption(
+        # 긴 설명 캡션은 흐린 회색 st.caption 대신 진한 슬레이트 색으로 (B-8).
+        st.markdown(
+            '<div style="font-size:0.95rem; line-height:1.65; color:#334155;">'
             "실측 분포 기반: NVIDIA Nemotron-Personas-Korea(v1.0)의 한국인 "
             "페르소나 100만 건에서 계층추출한 10,000건 발췌본에서 쿼터대로 추출합니다. "
             "손으로 정한 가중치가 아니라 실측 분포에서 샘플링하므로 패널 구성이 "
-            "모집단을 닮았다는 근거를 제시할 수 있습니다."
+            "모집단을 닮았다는 근거를 제시할 수 있습니다.</div>",
+            unsafe_allow_html=True,
         )
 
     dims = store.get("persona_dims")
@@ -2053,10 +2241,12 @@ def step2():
 
     st.subheader("고정밀 모드 (인터뷰 기반)")
     with st.container(border=True):
-        st.caption(
+        st.markdown(
+            '<div style="font-size:0.95rem; line-height:1.65; color:#334155;">'
             "스탠포드 Generative Agents 연구에서 정규화 정확도 83%로 가장 높았던 방식입니다. "
             "1인당 약 2시간의 인터뷰 트랜스크립트가 필요합니다. "
-            "트랜스크립트를 업로드하면 생성 단계에서 고정밀 모드를 켤 수 있습니다."
+            "트랜스크립트를 업로드하면 생성 단계에서 고정밀 모드를 켤 수 있습니다.</div>",
+            unsafe_allow_html=True,
         )
         if store.get("persona_source") == "nemotron":
             st.info(
@@ -2136,9 +2326,9 @@ def step3():
             info = learned.get(q["id"])
             with st.container(border=True):
                 if not info:
-                    st.write(f"{q_service.question_summary(q)} — 매칭된 컬럼 없음")
+                    st.write(f"{_escape_markdown_label(q_service.question_summary(q))} — 매칭된 컬럼 없음")
                     continue
-                st.write(f"**{q_service.question_summary(q)}**  ·  n={info['n']}")
+                st.write(f"**{_escape_markdown_label(q_service.question_summary(q))}**  ·  n={info['n']}")
                 if info["dist"]:
                     ddf = pd.DataFrame(
                         {"보기": list(info["dist"].keys()), "비율": list(info["dist"].values())}
@@ -2242,7 +2432,10 @@ def step4():
         elif n_trans == 0:
             st.caption("인터뷰 트랜스크립트를 업로드하면 활성화됩니다 (2단계에서 업로드).")
 
-    n = st.number_input("생성할 응답자 수", min_value=1, max_value=200, value=30, step=1)
+    n = st.number_input(
+        f"생성할 응답자 수 (최대 {MAX_RESPONDENTS}명)",
+        min_value=1, max_value=MAX_RESPONDENTS, value=30, step=1,
+    )
 
     can_run = ok and len(store.get("questions")) > 0
     code_ok = is_code_verified()
@@ -2278,7 +2471,7 @@ def step4():
                 used_model = prov.last_used_model or current_model()
                 auto_switched = used_model != current_model()
                 gen_meta = {
-                    "생성일시": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "생성일시": _fmt_kst_now() + " KST",
                     "AI": prov.label,
                     "모델": used_model,
                     "응답자 수": int(n),
@@ -2376,7 +2569,7 @@ def step5():
         st.subheader("분포 비교 (생성 vs 학습)")
         for q in comp_qs:
             with st.container(border=True):
-                st.write(f"**{q_service.question_summary(q)}**")
+                st.write(f"**{_escape_markdown_label(q_service.question_summary(q))}**")
                 gen_counts = df[q["id"]].astype(str).value_counts(normalize=True)
                 cats = list(learned[q["id"]]["dist"].keys())
                 cdf = pd.DataFrame({
@@ -2433,21 +2626,29 @@ def step5():
 
 # ----------------------------------------------------------------------------
 def _render_workflow_guide():
-    """작업 순서 가이드 (UX 개선 ③). 현재 단계를 체크 표시로 보여준다."""
+    """작업 순서 가이드 (UX 개선 ③). 실제 완료 기준으로 체크 표시를 보여준다.
+
+    항목은 스테퍼·주 메뉴와 같은 _step_completion() 판정을 써서 표기가
+    어긋나지 않는다 (B-3). '프로젝트를 먼저 만들어야…' 문구는 프로젝트가
+    없을 때만, 프로젝트가 있는데 미저장이면 미저장 안내를 보여준다 (B-4).
+    """
     has_project = bool(store.get("project_id"))
-    has_questions = bool(store.get("questions"))
-    has_results = store.get("results_df") is not None
+    done = _step_completion()
     saved = _is_current_state_saved()
     items = [
         ("1. 프로젝트 만들기", has_project),
-        ("2. 설문·페르소나 설계", has_questions),
-        ("3. 가상 응답 생성", has_results),
-        ("4. 저장", saved),
+        ("2. 설문 설계", done.get(1, False)),
+        ("3. 페르소나 설계", done.get(2, False)),
+        ("4. 분포 학습 (선택)", done.get(3, False)),
+        ("5. 가상 응답 생성", done.get(4, False)),
+        ("6. 저장", saved),
     ]
-    line = " → ".join(f"{'✓' if done else '○'} {label}" for label, done in items)
+    line = " → ".join(f"{'✓' if d else '○'} {label}" for label, d in items)
     st.caption(f"작업 순서: {line}")
-    if has_project and not saved:
+    if not has_project:
         st.caption("프로젝트를 먼저 만들어야 작업 내용이 저장됩니다. 탭을 닫기 전에 저장 버튼을 눌러주세요.")
+    elif not saved:
+        st.caption("저장되지 않은 변경이 있습니다. 탭을 닫기 전에 저장 버튼을 눌러주세요.")
 
 
 def _render_save_status():
@@ -2458,7 +2659,10 @@ def _render_save_status():
     if _is_current_state_saved():
         at = st.session_state.get("_last_saved_at") or ""
         storage = globals().get("_storage_label", "")
-        suffix = f" · {at}" if at else ""
+        if at and st.session_state.get("_last_saved_at_kst"):
+            suffix = f" · {at} KST"
+        else:
+            suffix = f" · {at}" if at else ""
         suffix += f" · {storage}" if storage else ""
         st.caption(f"✅ 저장됨{suffix}")
     else:
@@ -2524,7 +2728,7 @@ if not projects:
     st.stop()
 
 # 상단 메뉴별 페이지 분할 (페이지 상태 방식) — 현재 페이지만 본문에 렌더링한다.
-# 5개 단계 + 프로젝트 관리 + 업데이트 기록 = 7개 페이지. 스테퍼는 상단에 유지된다.
+# 5개 단계 + 제품 소개 + 프로젝트 관리 + 업데이트 기록 = 8개 페이지. 스테퍼는 상단에 유지된다.
 _step_fns = {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}
 _current_page = store.get("page") or "step1"
 if _current_page == "projects":
