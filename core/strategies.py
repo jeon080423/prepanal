@@ -1,6 +1,6 @@
 """생성 전략 (core/strategies.py) — Strategy 패턴
 
-3개 모드(분포학습/분포추출/고정밀) + 주관식 생성이 Strategy 클래스다.
+4개 모드(분포학습/분포추출/고정밀/조건부 분포추출) + 주관식 생성이 Strategy 클래스다.
 새 전략 추가 방법:
     1. GenerationStrategy를 상속한 클래스 1개 작성
        (supports / generate 구현, 필요하면 persona_texts 오버라이드)
@@ -99,13 +99,45 @@ def _check_batch(parsed: list, expected: int) -> list:
     return parsed
 
 
+def _call_with_retry(ctx: GenerationContext, prompt: str,
+                     expected: int) -> list:
+    """LLM 1회 호출 + JSON 파싱, 최대 3회 재시도.
+
+    JSON 파싱 실패(ValueError)도 재시도 대상이다 (파싱이 try 밖에 있어
+    1회 실패로 실행 전체가 중단되던 결함 수정). 재시도 시 캐시를 우회해
+    새로 생성한다. 3회 전부 실패하면 마지막 오류를 던진다.
+    """
+    last_err: ValueError | None = None
+    for attempt in range(3):
+        if attempt > 0:
+            ctx.cache.pop(_cache_key(ctx.provider_id, ctx.model, prompt),
+                          None)
+        raw = cached_generate(ctx, prompt)
+        try:
+            return _check_batch(parse_json_array(raw), expected)
+        except ValueError as e:
+            last_err = e
+            continue
+    raise last_err if last_err is not None else ValueError("LLM 호출 실패")
+
+
 def _build_dist_prompt(choice_questions: list[dict],
-                       persona_texts: list[str]) -> str:
+                       persona_texts: list[str],
+                       anchor_conditional: bool = False) -> str:
     """Prolific 연구팀(Gordon et al., 2026) 방식: 강제 단일 응답이 아닌 보기별 선택 확률분포를 추출."""
     profiles = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(persona_texts))
     lines = [get_question_type(q["type"]).dist_prompt_fragment(q)
              for q in choice_questions]
     qblock = "\n".join(lines)
+    anchor_note = ""
+    if anchor_conditional:
+        anchor_note = """
+[앵커 조건]
+각 응답자 프로필에 표시된 앵커 답변(지지정당·이념 성향)을 조건으로 삼아,
+각 문항의 보기별 선택 확률은 조건부 확률 P(보기 | 앵커 답변)로 추정하세요.
+앵커 답변과 모순되는 보기에는 낮은 확률을 주고, 앵커 답변과 일관된
+보기에는 높은 확률을 주세요. 앵커 답변이 없는 응답자는 이 조건을 무시하세요.
+"""
     return f"""당신은 설문조사 응답 분포 추정 전문가입니다.
 각 응답자 프로필을 보고, 각 문항의 보기별 선택 확률(0~1 사이 실수)을 추정하세요.
 특정 보기를 하나로 찍지 말고 반드시 확률분포 형태로 답하세요.
@@ -115,7 +147,7 @@ def _build_dist_prompt(choice_questions: list[dict],
 
 [문항]
 {qblock}
-
+{anchor_note}
 [출력 형식]
 JSON 배열로만 출력하세요. 설명이나 코드펜스 없이 아래 형식 그대로:
 [{{"Q1": {{"보기1": 0.5, "보기2": 0.3}}, "Q3": {{"전혀 그렇지 않다": 0.1, ...}}}}, ...]
@@ -228,24 +260,9 @@ class DistributionElicitationStrategy(GenerationStrategy):
 
     def generate(self, ctx, questions, personas, rng) -> list[dict]:
         ptexts = self.persona_texts(ctx, personas, rng)
-        # LLM이 요청 개수보다 적게 반환하면 최대 3회까지 재시도
-        last_err = None
-        for attempt in range(3):
-            # 재시도 시 캐시를 우회하여 새로 생성
-            if attempt > 0:
-                key = _cache_key(ctx.provider_id, ctx.model,
-                                 _build_dist_prompt(questions, ptexts))
-                ctx.cache.pop(key, None)
-            raw = cached_generate(ctx, _build_dist_prompt(questions, ptexts))
-            parsed = parse_json_array(raw)
-            try:
-                parsed = _check_batch(parsed, len(personas))
-                break
-            except ValueError as e:
-                last_err = e
-                continue
-        else:
-            raise last_err
+        # LLM 호출 + JSON 파싱, 최대 3회 재시도 (파싱 실패도 재시도 대상)
+        parsed = _call_with_retry(
+            ctx, _build_dist_prompt(questions, ptexts), len(personas))
         out = []
         for i in range(len(personas)):
             ans = {}
@@ -279,6 +296,127 @@ class PrecisionGenerationStrategy(DistributionElicitationStrategy):
 
 
 # ----------------------------------------------------------------------------
+# 3-2) 조건부 분포추출 — 앵커 연동 (b) 전략
+# ----------------------------------------------------------------------------
+# 앵커 문항(지지정당·이념 성향) 판별 키워드: 문항 내용 기준 + 문항 id 기준.
+ANCHOR_TEXT_KEYWORDS = (
+    "지지정당", "지지 정당", "정당",
+    "이념 성향", "이념성향",
+    "정치 성향", "정치성향", "정치적 성향",
+)
+ANCHOR_ID_KEYWORDS = ("party", "ideology", "pol_lean", "political")
+
+
+def _is_anchor_question(q: dict) -> bool:
+    """앵커 문항(지지정당·이념 성향) 판별: 문항 id/내용 기준."""
+    qid = str(q.get("id") or "").lower()
+    if any(kw in qid for kw in ANCHOR_ID_KEYWORDS):
+        return True
+    text = str(q.get("text") or "")
+    return any(kw in text for kw in ANCHOR_TEXT_KEYWORDS)
+
+
+def _render_anchor_answers(anchor_questions: list[dict],
+                           answers: dict) -> str:
+    """한 응답자의 앵커 답변을 'Q1(지지하는 정당은?)=더불어민주당; ...' 형태로."""
+    parts = []
+    for q in anchor_questions:
+        parts.append(f"{q['id']}({q.get('text', '')})={answers.get(q['id'], '')}")
+    return "; ".join(parts)
+
+
+class ConditionalElicitationStrategy(DistributionElicitationStrategy):
+    name = "conditional"
+    label = "조건부 분포추출 (앵커 연동)"
+    description = ("앵커 문항(지지정당·이념 성향)을 먼저 추출해 페르소나에 붙인 뒤 "
+                   "나머지 문항의 앵커 조건부 확률을 2차 호출로 추정 "
+                   "(문항 간 일관성 개선). 학습된 분포가 있는 문항은 "
+                   "LLM 호출 없이 조건부 prior로 샘플링.")
+
+    def supports(self, q: dict, ctx: GenerationContext) -> bool:
+        # 선택형 문항 전부 (학습 분포 문항 포함 — 조건부 prior로 처리).
+        # 앵커가 없는 설문이면 일반 분포추출과 동일하게 동작한다.
+        return get_question_type(q["type"]).is_choice
+
+    def generate(self, ctx, questions, personas, rng) -> list[dict]:
+        anchors = [q for q in questions if _is_anchor_question(q)]
+        rest = [q for q in questions if not _is_anchor_question(q)]
+        if not anchors:
+            # 앵커 없음 → 일반 분포추출과 동일
+            return super().generate(ctx, questions, personas, rng)
+        ptexts = self.persona_texts(ctx, personas, rng)
+        # -- 1단계: 앵커 답변 추출 -----------------------------------------
+        anchor_answers = self._sample_anchors(ctx, anchors, ptexts, rng)
+        out = [dict(a) for a in anchor_answers]
+        if not rest:
+            return out
+        # -- 2단계: 나머지 문항 --------------------------------------------
+        # 앵커 답변을 페르소나 텍스트에 부착한다. 2차 호출 프롬프트가
+        # 앵커 답변을 포함하므로 캐시 키(_cache_key: provider|model|prompt)
+        # 에도 앵커 답변이 포함된다.
+        cond_ptexts = [
+            f"{t}\n[이 응답자의 앵커 답변: "
+            f"{_render_anchor_answers(anchors, anchor_answers[i])}]"
+            for i, t in enumerate(ptexts)
+        ]
+        # 학습된 분포가 있는 문항: 조건부 prior로 샘플링 (LLM 호출 없음)
+        for q in rest:
+            if not _has_learned_dist(q, ctx):
+                continue
+            qtype = get_question_type(q["type"])
+            dist = ctx.learned[q["id"]]["dist"]
+            for i in range(len(personas)):
+                out[i][q["id"]] = qtype.sample_from_learned(q, dist, rng)
+        # 학습된 분포가 없는 문항: 2차 호출로 앵커 조건부 확률 추정
+        llm_rest = [q for q in rest if not _has_learned_dist(q, ctx)]
+        if llm_rest:
+            try:
+                parsed = _call_with_retry(
+                    ctx, _build_dist_prompt(llm_rest, cond_ptexts),
+                    len(personas))
+            except ValueError:
+                # (a) 경량 폴백: 앵커 조건부 확률 요청을 명시한 확장
+                # 프롬프트로 재시도 (2차 호출 3회 전부 실패 시에만).
+                parsed = _call_with_retry(
+                    ctx,
+                    _build_dist_prompt(llm_rest, cond_ptexts,
+                                       anchor_conditional=True),
+                    len(personas))
+            for i in range(len(personas)):
+                prow = parsed[i] if isinstance(parsed[i], dict) else {}
+                for q in llm_rest:
+                    qtype = get_question_type(q["type"])
+                    praw = prow.get(q["id"], {})
+                    probs = qtype.probs_from_elicited(
+                        q, praw if isinstance(praw, dict) else {})
+                    out[i][q["id"]] = qtype.sample_from_elicited(q, probs, rng)
+        return out
+
+    def _sample_anchors(self, ctx, anchors, ptexts, rng) -> list[dict]:
+        """앵커 답변 샘플링: 학습 분포가 있으면 prior로, 없으면 LLM 분포추출."""
+        learned_anchors = [q for q in anchors if _has_learned_dist(q, ctx)]
+        llm_anchors = [q for q in anchors if not _has_learned_dist(q, ctx)]
+        out: list[dict] = [{} for _ in ptexts]
+        for q in learned_anchors:
+            qtype = get_question_type(q["type"])
+            dist = ctx.learned[q["id"]]["dist"]
+            for i in range(len(ptexts)):
+                out[i][q["id"]] = qtype.sample_from_learned(q, dist, rng)
+        if llm_anchors:
+            parsed = _call_with_retry(
+                ctx, _build_dist_prompt(llm_anchors, ptexts), len(ptexts))
+            for i in range(len(ptexts)):
+                prow = parsed[i] if isinstance(parsed[i], dict) else {}
+                for q in llm_anchors:
+                    qtype = get_question_type(q["type"])
+                    praw = prow.get(q["id"], {})
+                    probs = qtype.probs_from_elicited(
+                        q, praw if isinstance(praw, dict) else {})
+                    out[i][q["id"]] = qtype.sample_from_elicited(q, probs, rng)
+        return out
+
+
+# ----------------------------------------------------------------------------
 # 4) 주관식 — LLM 배치 생성
 # ----------------------------------------------------------------------------
 class OpenEndedGenerationStrategy(GenerationStrategy):
@@ -291,23 +429,9 @@ class OpenEndedGenerationStrategy(GenerationStrategy):
 
     def generate(self, ctx, questions, personas, rng) -> list[dict]:
         ptexts = self.persona_texts(ctx, personas, rng)
-        # LLM이 요청 개수보다 적게 반환하면 최대 3회까지 재시도
-        last_err = None
-        for attempt in range(3):
-            if attempt > 0:
-                key = _cache_key(ctx.provider_id, ctx.model,
-                                 _build_open_prompt(questions, ptexts))
-                ctx.cache.pop(key, None)
-            raw = cached_generate(ctx, _build_open_prompt(questions, ptexts))
-            parsed = parse_json_array(raw)
-            try:
-                parsed = _check_batch(parsed, len(personas))
-                break
-            except ValueError as e:
-                last_err = e
-                continue
-        else:
-            raise last_err
+        # LLM 호출 + JSON 파싱, 최대 3회 재시도 (파싱 실패도 재시도 대상)
+        parsed = _call_with_retry(
+            ctx, _build_open_prompt(questions, ptexts), len(personas))
         out = []
         for i in range(len(personas)):
             ans = {}
@@ -359,5 +483,6 @@ def select_strategy(q: dict, ctx: GenerationContext,
 
 register_strategy(LearnedDistributionStrategy())
 register_strategy(PrecisionGenerationStrategy())
+register_strategy(ConditionalElicitationStrategy())
 register_strategy(DistributionElicitationStrategy())
 register_strategy(OpenEndedGenerationStrategy())

@@ -116,9 +116,10 @@ def test_register_new_question_type_one_line():
         assert qt.validate(q) == []
         assert "순위형" in qt.prompt_fragment(q)
         assert qt.parse_response(q, " A ") == "A"
-        # 전략 매칭도 자동으로 됨 (is_choice=True → 분포추출 전략이 받음)
+        # 전략 매칭도 자동으로 됨 (is_choice=True → 조건부 전략이 받음.
+        # 앵커가 없는 설문이면 조건부 전략이 일반 분포추출과 동일하게 동작)
         ctx = GenerationContext(provider_id="dummy", model="dummy-1")
-        assert select_strategy(q, ctx).name == "elicitation"
+        assert select_strategy(q, ctx).name == "conditional"
     finally:
         del QUESTION_TYPE_REGISTRY["ranking"]
 
@@ -140,7 +141,7 @@ def test_question_type_validation():
 # 전략 레지스트리
 # ----------------------------------------------------------------------------
 def test_default_strategies_registered():
-    assert set(STRATEGY_REGISTRY) == {"learned", "precision",
+    assert set(STRATEGY_REGISTRY) == {"learned", "precision", "conditional",
                                       "elicitation", "open_ended"}
 
 
@@ -182,9 +183,9 @@ def test_strategy_selection_priority():
                                             "matched_col": "c"}})
     assert select_strategy(q_single, ctx).name == "learned"
 
-    # 학습 분포 없음 → elicitation
+    # 학습 분포 없음 → conditional (앵커가 없으면 분포추출과 동일 동작)
     ctx2 = GenerationContext(provider_id="d", model="m")
-    assert select_strategy(q_single, ctx2).name == "elicitation"
+    assert select_strategy(q_single, ctx2).name == "conditional"
 
     # 고정밀 컨텍스트 → precision
     ctx3 = GenerationContext(provider_id="d", model="m", use_precision=True,

@@ -186,6 +186,7 @@ from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, Gene
                   LearningService, PdfQuestionnaireService, QuestionnaireService, SessionStore,
                   auth_status, get_provider, get_question_type,
                   ProjectStore, PROJECT_STATE_KEYS, SheetsProjectStore,
+                  HybridProjectStore,
                   load_nemotron_extract, nemotron_default_quotas)
 
 STEPS = ["설문 설계", "응답자 구성", "실측 응답 학습(선택)", "가상 응답 생성", "결과·진단"]
@@ -245,6 +246,8 @@ def init_state():
     store.set_default("provider", "gemini")
     store.set_default("model_override", "")
     store.set_default("gen_cache", {})
+    store.set_default("gen_checkpoint", None)  # 배치 재개용 체크포인트 (워커 D)
+    store.set_default("gen_seed", None)  # 재개 시 같은 난수 순서를 위한 seed (워커 D)
     store.set_default("project_id", None)
 
 
@@ -981,7 +984,6 @@ if SheetsProjectStore.is_configured():
         _sheets_store = SheetsProjectStore()
         # 실제 연결 테스트 (권한 문제 등을 조기에 감지)
         _sheets_store.list_projects()
-        _project_store = _sheets_store
         _storage_label = "☁️ Google Sheets"
     except Exception as e:
         # Sheets 연결 실패 시 로컬로 폴백하고 경고 표시
@@ -991,6 +993,13 @@ if SheetsProjectStore.is_configured():
                 f"⚠️ Google Sheets 연결 실패로 로컬 저장소를 사용합니다. "
                 f"({str(e)[:100]})"
             )
+    # C-1 저장소 플립 수정: 백엔드를 매 rerun마다 통째로 갈아끼우지 않는다.
+    # HybridProjectStore는 Sheets·로컬 목록을 합집합으로 보여주므로, 429로
+    # Sheets가 잠시 끊긴 동안 로컬에 만든 프로젝트가 복구 후 목록에서
+    # 사라지지 않는다. Sheets 미복구 시에도 로컬 목록은 계속 보인다.
+    # (상세: MECHANISM_C.md, core/hybrid_projects.py)
+    _project_store = HybridProjectStore(
+        primary_factory=SheetsProjectStore, fallback=ProjectStore())
 
 
 def _save_current_project():
@@ -2561,6 +2570,43 @@ def step4():
     )
     st.info(f"예상 소요 시간 {_est_label}")
     st.caption(_est_tip)
+    # 배치 재개 상태 (워커 D): 중단된 생성 기록이 있으면 표시한다.
+    # 새 외부 저장소 없이 세션 상태의 체크포인트 + 기존 gen_cache만 쓴다.
+    from core.services import (build_checkpoint_fingerprint,
+                               checkpoint_matches, format_checkpoint_status)
+    from config import DEFAULT_BATCH_SIZE
+    _resume_cp = store.get("gen_checkpoint")
+    _resume_ok = False
+    if _resume_cp:
+        _resume_fp = build_checkpoint_fingerprint(
+            store.get("questions"), int(n),
+            batch_size=DEFAULT_BATCH_SIZE, seed=store.get("gen_seed"),
+            provider_id=provider, model=current_model(),
+            persona_source=store.get("persona_source") or "nemotron",
+            persona_dims=store.get("persona_dims"),
+            learned=store.get("learned"),
+            transcripts=store.get("transcripts")
+            if store.get("use_precision") else None,
+            use_precision=store.get("use_precision"),
+            nemotron_quotas=store.get("nemotron_quotas"),
+            nemotron_count_quotas=(store.get("nemotron_count_quotas")
+                                   if store.get("nemotron_quota_mode") == "count"
+                                   else None),
+            nemotron_region_level=store.get("nemotron_region_level")
+            or "region",
+            nemotron_facets=store.get("nemotron_facets"))
+        _resume_ok = checkpoint_matches(_resume_cp, _resume_fp)
+        if _resume_ok:
+            st.info("⏸️ " + format_checkpoint_status(_resume_cp))
+        else:
+            st.warning(
+                "이전 생성 중단 기록이 현재 설정과 맞지 않아 이어서 진행할 "
+                "수 없습니다. '처음부터 다시 생성'을 누르면 중단 기록을 "
+                "버리고 새로 시작합니다.")
+        if st.button("처음부터 다시 생성", disabled=not can_run):
+            store.set("gen_checkpoint", None)
+            store.set("gen_seed", None)
+            st.rerun()
     if st.button("생성 시작", type="primary", disabled=not can_run):
         if not code_ok:
             st.error("🔒 액세스 코드를 입력해야 생성을 시작할 수 있습니다. (좌측 사이드바에서 입력)")
@@ -2568,6 +2614,22 @@ def step4():
             st.error("AI 인증이 필요합니다.")
         else:
             progress = st.progress(0.0, text="생성 중...")
+            # 배치 재개 (워커 D): 중단 기록이 현재 조건과 맞으면 같은 seed로
+            # 이어서 진행하고, 아니면 새 seed로 처음부터 생성한다.
+            if _resume_ok:
+                _seed = store.get("gen_seed")
+            else:
+                import random as _random
+                _seed = _random.randint(0, 2**31 - 1)
+                store.set("gen_seed", _seed)
+            # M-2: 새 실행 시작 시 이전 실행의 체크포인트 스냅샷을 비운다.
+            # gen_service는 모듈 레벨 싱글턴이라 last_checkpoint이 성공한
+            # 이전 실행의 최종 스냅샷을 계속 들고 있다. 새 실행이 배치 0
+            # 완료 전에 실패하면 예외 핸들러가 그 낡은 스냅샷을 세션에
+            # 저장해 "이어서 진행" 표시를 오해하게 만든다. 재개 경로는
+            # 세션의 gen_checkpoint(_resume_cp)를 쓰므로 이 초기화는
+            # 재개 동작에 영향을 주지 않는다.
+            gen_service.last_checkpoint = None
             try:
                 df = gen_service.generate_responses(
                     questions=store.get("questions"),
@@ -2587,6 +2649,9 @@ def step4():
                                            else None),
                     nemotron_region_level=store.get("nemotron_region_level") or "region",
                     nemotron_facets=store.get("nemotron_facets"),
+                    seed=_seed,
+                    checkpoint=_resume_cp if _resume_ok else None,
+                    checkpoint_cb=lambda cp: store.set("gen_checkpoint", cp),
                 )
                 store.set("results_df", df)
                 prov = get_provider(provider)
@@ -2603,6 +2668,19 @@ def step4():
                 if gen_service.last_gen_meta:
                     gen_meta.update(gen_service.last_gen_meta)
                 store.set("gen_meta", gen_meta)
+                store.set("gen_checkpoint", None)
+                store.set("gen_seed", None)
+                if (gen_service.last_resume_info
+                        and gen_service.last_resume_info.get("resumed_batches")):
+                    _ri = gen_service.last_resume_info
+                    _resume_msg = (
+                        "이어서 진행 완료: "
+                        f"{_ri['resumed_batches']}배치 완료 상태에서 재개했습니다.")
+                    if not _ri.get("cache_covered"):
+                        _resume_msg += (
+                            f" (캐시 미커버 {_ri.get('cache_misses', 0)}건 "
+                            "LLM 재호출)")
+                    st.info(_resume_msg)
                 progress.progress(1.0, text="완료")
                 st.success(f"{len(df)}건 생성 완료")
                 if auto_switched:
@@ -2614,6 +2692,11 @@ def step4():
                 _save_current_project()
             except Exception as e:
                 st.error(f"생성 실패: {e}")
+                if gen_service.last_checkpoint:
+                    store.set("gen_checkpoint", gen_service.last_checkpoint)
+                    st.info("⏸️ "
+                            + format_checkpoint_status(
+                                gen_service.last_checkpoint))
 
     st.divider()
     c1, c2 = st.columns(2)

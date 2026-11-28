@@ -45,6 +45,25 @@ class UnknownProviderError(ValueError):
     """등록되지 않은 provider를 요청했을 때 발생."""
 
 
+# 재시도 가능한(다음 키·모델·provider로 폴백을 타는) 오류 판별 마커.
+# 기존 마커(429/503/404/타임아웃)에 더해, 잘린·빈 응답도 폴백 대상이다.
+# Gemini _call_rest가 던지는 MAX_TOKENS/빈 응답 오류는 이 마커를 포함한다.
+_RETRYABLE_ERROR_MARKERS = (
+    "429", "503", "404", "timed out", "timeout",
+    "no longer available",
+    "max_tokens", "empty response", "truncated",
+)
+
+
+def _is_retryable_error(err: str) -> bool:
+
+    """다음 키·모델·provider로 넘어가도 되는 오류인지 판별한다."""
+
+    lowered = err.lower()
+
+    return any(m in lowered for m in _RETRYABLE_ERROR_MARKERS)
+
+
 class AIProvider(ABC):
 
     """새 AI는 이 클래스를 상속하고 _call_rest만 구현하면 된다."""
@@ -84,6 +103,10 @@ class AIProvider(ABC):
         self._custom_key = ""  # 사용자가 직접 입력한 API 키 (세션 한정)
 
         self.last_used_model = ""  # 마지막 생성에 실제 사용된 모델 (자동 전환 추적용)
+
+        self._key_cursor = 0  # 라운드로빈: 다음 generate()가 시작할 키 인덱스
+
+        self._last_start_key_index = -1  # 마지막 generate()의 시작 키 인덱스 (관찰용)
 
     # -- 사용자 API 키 ------------------------------------------------------
 
@@ -294,9 +317,22 @@ class AIProvider(ABC):
 
         last_err: Exception | None = None
 
-        # 키 로테이션: 429가 나면 다음 키로 전환
+        # 키 라운드로빈: 매 호출마다 시작 키를 한 칸씩 순환시켜 여러 키에
+        # 부하를 분산시킨다. 호출 1회마다 시작 키가 바뀌므로, 첫 키만 계속
+        # 소진되는 기존 동작이 사라진다. 429 등이 나면 기존처럼 다음 키로 전환.
+        n_keys = len(api_keys)
 
-        for key_idx, api_key in enumerate(api_keys):
+        start_key = self._key_cursor % n_keys
+
+        self._last_start_key_index = start_key
+
+        self._key_cursor += 1
+
+        ordered_keys = [(start_key + i) % n_keys for i in range(n_keys)]
+
+        for key_idx in ordered_keys:
+
+            api_key = api_keys[key_idx]
 
             for cand in candidates:
 
@@ -317,11 +353,10 @@ class AIProvider(ABC):
 
                     err = str(e).lower()
 
-                    # 429(할당량 초과)/503(과부하)/404(모델 미지원)/타임아웃이면 다음으로 전환
+                    # 429(할당량 초과)/503(과부하)/404(모델 미지원)/타임아웃/
+                    # 잘린·빈 응답이면 다음 키·모델로 전환
 
-                    if ("429" not in err and "503" not in err and "404" not in err
-                            and "timed out" not in err and "timeout" not in err
-                            and "no longer available" not in err):
+                    if not _is_retryable_error(err):
 
                         raise
 
@@ -376,6 +411,17 @@ class AIProvider(ABC):
 
 class GeminiProvider(AIProvider):
 
+    # Gemini 3.x thinking 설정. 3.x는 thinkingBudget(2.5 방식)이 아니라
+    # thinkingLevel을 쓴다(둘은 상호 배타적 — 함께 보내면 400 오류).
+    # "MINIMAL"은 gemini-3.8-flash 등 일부 모델에서 400을 내므로, 전 모델이
+    # 받는 최소 수준인 "LOW"를 쓴다(3.5-flash-lite/3.6-flash/3.8-flash 공통).
+    # thinking 토큰은 maxOutputTokens 안에 counted되므로, LOW로 묶어 두면
+    # 출력 토큰이 thinking에 잠식돼 분포 JSON이 잘리는 일을 줄인다.
+    GEMINI_THINKING_LEVEL = "LOW"
+
+    # 분포 JSON 출력 여유분. thinking 포함 출력 상한.
+    GEMINI_MAX_OUTPUT_TOKENS = 8192
+
     def _call_rest(self, api_key: str, prompt: str, model: str,
                    timeout: int = 180, temperature: float = 0.7) -> str:
 
@@ -385,7 +431,15 @@ class GeminiProvider(AIProvider):
 
             "contents": [{"parts": [{"text": prompt}]}],
 
-            "generationConfig": {"temperature": temperature},
+            "generationConfig": {
+
+                "temperature": temperature,
+
+                "maxOutputTokens": self.GEMINI_MAX_OUTPUT_TOKENS,
+
+                "thinkingConfig": {"thinkingLevel": self.GEMINI_THINKING_LEVEL},
+
+            },
 
         }).encode("utf-8")
 
@@ -415,11 +469,66 @@ class GeminiProvider(AIProvider):
 
             raise RuntimeError(f"The read operation timed out: {e}")
 
+        # 응답 검증: finishReason·usageMetadata·본문 텍스트를 검사한다.
+        # MAX_TOKENS로 잘렸거나 본문이 비어 있으면, 잘린 JSON을 그대로
+        # 돌려주지 않고 재시도 가능한 오류를 던져 다음 키·모델 폴백을 탄다.
+        # 오류 메시지에는 _is_retryable_error 마커(max_tokens/empty response/
+        # truncated)를 포함시켜 generate()의 폴백 판별에 걸리게 한다.
         try:
 
-            return data["candidates"][0]["content"]["parts"][0]["text"]
+            candidates = data.get("candidates") or []
 
-        except (KeyError, IndexError):
+            if not candidates:
+
+                raise RuntimeError(
+                    "Gemini empty response: candidates가 비어 있습니다. "
+                    f"(empty response, 응답: {json.dumps(data, ensure_ascii=False)[:300]})")
+
+            cand = candidates[0]
+
+            finish_reason = cand.get("finishReason", "")
+
+            usage = data.get("usageMetadata") or {}
+
+            if finish_reason == "MAX_TOKENS":
+
+                raise RuntimeError(
+                    "Gemini output truncated: finishReason=MAX_TOKENS — "
+                    "출력 토큰 한도에 걸려 응답이 잘렸습니다. "
+                    f"(max_tokens, usageMetadata={json.dumps(usage, ensure_ascii=False)[:200]})")
+
+            cand_tokens = usage.get("candidatesTokenCount")
+
+            if (cand_tokens is not None
+                    and cand_tokens >= self.GEMINI_MAX_OUTPUT_TOKENS):
+
+                raise RuntimeError(
+                    "Gemini output truncated: candidatesTokenCount가 "
+                    "maxOutputTokens에 도달했습니다. "
+                    f"(max_tokens, usageMetadata={json.dumps(usage, ensure_ascii=False)[:200]})")
+
+            parts = (cand.get("content") or {}).get("parts") or []
+
+            text = "".join(
+                p.get("text", "")
+                for p in parts
+                if isinstance(p, dict) and "text" in p and not p.get("thought")
+            )
+
+            if not text.strip():
+
+                raise RuntimeError(
+                    "Gemini empty response: 텍스트 part가 비어 있습니다. "
+                    f"(empty response, finishReason={finish_reason}, "
+                    f"usageMetadata={json.dumps(usage, ensure_ascii=False)[:200]})")
+
+            return text
+
+        except RuntimeError:
+
+            raise
+
+        except (KeyError, IndexError, TypeError, AttributeError):
 
             raise RuntimeError(
 
@@ -723,9 +832,7 @@ def generate(provider_id: str, prompt: str, model: str | None = None,
 
         # 전환 대상 오류가 아니면 그대로 전파
 
-        if ("429" not in err and "503" not in err and "404" not in err
-                and "timed out" not in err and "timeout" not in err
-                and "no longer available" not in err):
+        if not _is_retryable_error(err):
 
             raise
 

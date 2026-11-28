@@ -8,6 +8,7 @@ app.py(UI)는 이 서비스들만 호출한다. 비즈니스 로직은 전부 �
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import random
@@ -424,6 +425,197 @@ def _questions_between(order: list[str], source: str, target: str) -> list[str]:
 
 
 # ----------------------------------------------------------------------------
+# 배치 중간 저장 / 재개 (체크포인트) — 워커 D
+#
+# generate_responses()는 배치 단위(DEFAULT_BATCH_SIZE=5)로 돌다가 LLM 실패·
+# 세션 중단 등으로 중간에 끊기면 처음부터 다시 돌아야 했다 (300명=60배치).
+# 체크포인트는 배치 완료 시점마다 {완료 배치 수, 지금까지의 행, 지문}을
+# 스냅샷으로 남기고, 같은 시드·같은 조건으로 재진입하면 완료 배치를
+# 건너뛰어 마지막 완료 배치부터 이어간다.
+#
+# 재개 방식 — 재생성 스킵(replay-skip):
+#   완료 배치는 같은 코드 경로로 다시 실행하되 행은 버리고 체크포인트 행을
+#   그대로 쓴다. 재생성은 페르소나 샘플링·전략 generate()의 난수 소비를
+#   원래 순서대로 재현하기 위해서만 필요하고, 그 소비량은 LLM 출력값과
+#   무관하다 (가중 샘플링은 호출당 uniform 1회, 다중선택은 보기 수만큼
+#   random() 1회씩, 고정밀은 페르소나당 choice 1회 — 값에 따라 횟수가
+#   달라지는 경로는 없다). 그래서 실제 LLM이 같은 프롬프트에 다른 분포를
+#   돌려줘도 (a) 완료 배치 행은 체크포인트 그대로 보존되고, (b) 그 뒤
+#   배치의 난수 순서가 원래 실행과 일치해 최종 DataFrame이 중단 없이
+#   한 번에 돌린 결과와 행 단위로 동일하다.
+#   재생성 중 캐시에 프롬프트가 있으면 LLM 호출이 없고, 없으면 재호출이
+#   발생한다. 재호출 건수는 cache_misses에 기록해 last_resume_info로
+#   보고한다 (캐시 커버 여부 확인 — 최소 조건 (1)).
+#   분기(branching) 적용은 난수를 쓰지 않으므로 재생성 시 생략하고,
+#   체크포인트에 저장된 공란 건수를 그대로 이어받는다.
+#
+# 저장소: 새 외부 저장소는 쓰지 않는다. 체크포인트는 세션 상태
+# (app.py의 store "gen_checkpoint")에 두고, LLM 캐시는 기존 gen_cache
+# dict를 그대로 쓴다. seed가 None이면 중단 전 난수 순서를 재현할 수
+# 없어 재개가 불가하다 — ValueError를 낸다.
+# ----------------------------------------------------------------------------
+_CHECKPOINT_VERSION = 1
+
+
+def _stable_repr(obj) -> str:
+    """지문용 안정적 문자열화: dict 키 순서·tuple 키에 무관하게 동일 출력."""
+    if isinstance(obj, dict):
+        items = sorted(obj.items(), key=lambda kv: repr(kv[0]))
+        return "{" + ",".join(
+            f"{_stable_repr(k)}:{_stable_repr(v)}" for k, v in items) + "}"
+    if isinstance(obj, (list, tuple)):
+        return "[" + ",".join(_stable_repr(v) for v in obj) + "]"
+    return repr(obj)
+
+
+def _sha_short(obj) -> str:
+    return hashlib.sha256(_stable_repr(obj).encode("utf-8")).hexdigest()
+
+
+def build_checkpoint_fingerprint(
+    questions: list[dict],
+    n: int,
+    *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    seed: int | None = None,
+    provider_id: str = "",
+    model: str = "",
+    persona_source: str = "manual",
+    persona_dims: dict | None = None,
+    learned: dict | None = None,
+    transcripts: list[dict] | None = None,
+    use_precision: bool = False,
+    nemotron_quotas: dict | None = None,
+    nemotron_count_quotas: dict | None = None,
+    nemotron_region_level: str = "region",
+    nemotron_facets=None,
+) -> dict:
+    """재개 가능 여부를 판정하는 생성 조건 지문.
+
+    문항 정의(내용·유형·보기·분기), 응답자 수·배치 크기·seed·모델·
+    페르소나 출처·페르소나 차원(전체)·학습 분포(문항별 분포 값 전체)·
+    트랜스크립트(이름+본문 전체)·Nemotron 쿼터·facets가 하나라도
+    다르면 다른 실행으로 보고 이어서 진행하지 않는다.
+    (C-1 수정: persona_dims·학습 분포 값·트랜스크립트 본문·facets는
+    이전 지문에서 빠져 있어, 조건이 바뀐 채로 이어서 진행하면 앞 배치는
+    구 조건·뒷 배치는 신 조건으로 섞이는 조용한 오염이 생겼다.)
+    """
+    qsig = [{"id": q.get("id"), "text": q.get("text"), "type": q.get("type"),
+             "options": list(q.get("options") or []),
+             "branching": q.get("branching") or ""}
+            for q in (questions or [])]
+    n_int = int(n)
+    bs_int = int(batch_size)
+    total_batches = (n_int + bs_int - 1) // bs_int if n_int > 0 else 0
+    return {
+        "version": _CHECKPOINT_VERSION,
+        "n": n_int,
+        "batch_size": bs_int,
+        "total_batches": total_batches,
+        "seed": seed,
+        "provider_id": str(provider_id),
+        "model": str(model),
+        "persona_source": str(persona_source),
+        "use_precision": bool(use_precision),
+        "learned_qids": sorted((learned or {}).keys()),
+        "learned_sha": _sha_short(learned or {}),
+        "persona_dims_sha": _sha_short(persona_dims or {}),
+        "transcript_names": [str(t.get("name", ""))
+                             for t in (transcripts or [])],
+        "transcripts_sha": _sha_short(transcripts or []),
+        "question_sha": _sha_short(qsig),
+        "nemotron_sha": _sha_short({
+            "quotas": nemotron_quotas,
+            "count_quotas": nemotron_count_quotas,
+            "region_level": nemotron_region_level,
+            "facets": sorted(nemotron_facets or []),
+        }),
+    }
+
+
+def _checkpoint_problems(checkpoint, fingerprint: dict) -> list[str]:
+    """체크포인트가 지문과 맞지 않는 이유 목록 (빈 목록 = 재개 가능)."""
+    if not isinstance(checkpoint, dict):
+        return ["체크포인트가 dict가 아닙니다"]
+    problems: list[str] = []
+    if checkpoint.get("version") != _CHECKPOINT_VERSION:
+        problems.append(
+            f"체크포인트 버전 불일치: {checkpoint.get('version')!r}")
+    stored_fp = checkpoint.get("fingerprint")
+    if not isinstance(stored_fp, dict):
+        problems.append("체크포인트에 지문(fingerprint)이 없습니다")
+    elif stored_fp != fingerprint:
+        diff_keys = sorted(
+            {*stored_fp.keys(), *fingerprint.keys()}
+            - {k for k in stored_fp.keys() & fingerprint.keys()
+               if stored_fp[k] == fingerprint[k]})
+        problems.append(
+            "생성 조건이 바뀌었습니다 (지문 불일치: "
+            + ", ".join(diff_keys) + ")")
+    completed = checkpoint.get("completed_batches")
+    if (not isinstance(completed, int)) or isinstance(completed, bool) \
+            or completed < 0:
+        problems.append(
+            f"완료 배치 수가 올바르지 않습니다: {completed!r}")
+        return problems
+    total = fingerprint.get("total_batches", 0)
+    if completed > total:
+        problems.append(
+            f"완료 배치 수({completed})가 전체 배치 수({total})를 넘습니다")
+    rows = checkpoint.get("rows")
+    if not isinstance(rows, list) \
+            or any(not isinstance(r, dict) for r in rows):
+        problems.append("체크포인트 행(rows)이 dict 목록이 아닙니다")
+    else:
+        expected_rows = min(completed * fingerprint.get("batch_size", 0),
+                            fingerprint.get("n", 0))
+        if len(rows) != expected_rows:
+            problems.append(
+                f"체크포인트 행 수({len(rows)})가 완료 배치 수에 맞지 "
+                f"않습니다 (예상 {expected_rows}건)")
+    bb = checkpoint.get("branch_blanked")
+    if bb is not None and not isinstance(bb, dict):
+        problems.append("분기 공란 기록(branch_blanked)이 dict가 아닙니다")
+    return problems
+
+
+def checkpoint_matches(checkpoint, fingerprint: dict) -> bool:
+    """체크포인트로 이어서 진행할 수 있는지 (app.py 표시용)."""
+    try:
+        return not _checkpoint_problems(checkpoint, fingerprint)
+    except Exception:
+        return False
+
+
+def format_checkpoint_status(checkpoint) -> str:
+    """앱 표시용 재개 상태 문구 — "N배치 완료, 이어서 진행" 형태."""
+    try:
+        completed = int(checkpoint.get("completed_batches", 0))
+        total = int(checkpoint.get("total_batches", 0))
+        n_rows = len(checkpoint.get("rows") or [])
+        return (f"{completed}배치 완료, 이어서 진행 "
+                f"(전체 {total}배치 중 {completed}배치 · {n_rows}건 저장됨)")
+    except Exception:
+        return "이어서 진행 가능한 중단 기록이 있습니다."
+
+
+def _make_checkpoint(fingerprint: dict, completed_batches: int,
+                     rows: list[dict], branch_blanked: dict,
+                     cache_misses: int) -> dict:
+    """배치 완료 시점 스냅샷 (행은 복사해 이후 append에 오염되지 않게 한다)."""
+    return {
+        "version": _CHECKPOINT_VERSION,
+        "fingerprint": dict(fingerprint),
+        "completed_batches": int(completed_batches),
+        "total_batches": int(fingerprint["total_batches"]),
+        "rows": [dict(r) for r in rows],
+        "branch_blanked": dict(branch_blanked),
+        "cache_misses": int(cache_misses),
+        "status": "partial",
+    }
+
+
+# ----------------------------------------------------------------------------
 
 # 가상 응답 생성 (전략 오케스트레이션)
 
@@ -440,6 +632,14 @@ class GenerationService:
         # 분기(branching) 적용 메타 (규칙·공란 처리 건수·문항별 유효 n).
         # generate_responses()가 채운다.
         self.last_branch_meta: dict | None = None
+
+        # 배치 체크포인트 (워커 D): 마지막으로 완료된 배치의 스냅샷.
+        # generate_responses()가 배치마다 갱신한다. 중간에 예외로 끊겨도
+        # 마지막 완료 배치까지는 여기에 남아 app.py가 세션 상태에 옮길 수 있다.
+        self.last_checkpoint: dict | None = None
+        # 마지막 생성의 재개 정보: {"resumed_batches", "cache_misses",
+        # "cache_covered", "status", "status_text"}.
+        self.last_resume_info: dict | None = None
 
 
     # Nemotron 모드의 프로필 컬럼 순서 (직접 모드의 persona_dims 대응)
@@ -472,6 +672,8 @@ class GenerationService:
         nemotron_count_quotas: dict | None = None,
         nemotron_region_level: str = "region",
         nemotron_facets: tuple[str, ...] | list[str] | None = None,
+        checkpoint: dict | None = None,
+        checkpoint_cb=None,
     ) -> pd.DataFrame:
         """가상 응답 n건을 생성해 DataFrame으로 반환.
 
@@ -490,11 +692,54 @@ class GenerationService:
         공란("")으로 둔다. 적용 내역은 self.last_branch_meta와
         self.last_gen_meta["분기 스킵"]에 남긴다.
 
+        배치 중간 저장 / 재개 (checkpoint, checkpoint_cb):
+        배치 하나가 끝날 때마다 체크포인트 스냅샷을 만들고
+        self.last_checkpoint에 남긴 뒤 checkpoint_cb(스냅샷)을 부른다.
+        app.py는 이 콜백으로 스냅샷을 세션 상태에 저장한다. 중간에
+        예외로 끊기면 같은 seed·같은 조건으로 checkpoint를 넘겨 다시
+        부르면 완료 배치는 재생성 스킵(행은 체크포인트 그대로, 난수
+        순서만 재현)하고 마지막 완료 배치부터 이어간다. 재개 정보는
+        self.last_resume_info에, 상태 문구는
+        format_checkpoint_status(checkpoint)로 확인한다.
+        seed가 None이면 재개가 불가해 ValueError를 낸다. 지문이 맞지
+        않는 체크포인트도 ValueError를 낸다 (조용히 처음부터 다시
+        돌리지 않는다 — 행이 섞이는 것을 막기 위함).
+
         """
 
         rng = random.Random(seed)
         learned = learned or {}
         transcripts = transcripts or []
+        # --- 배치 체크포인트: 지문 계산·검증 (워커 D) ---
+        total_batches = (n + batch_size - 1) // batch_size if n > 0 else 0
+        fingerprint = build_checkpoint_fingerprint(
+            questions, n, batch_size=batch_size, seed=seed,
+            provider_id=provider_id, model=model,
+            persona_source=persona_source, persona_dims=persona_dims,
+            learned=learned,
+            transcripts=transcripts, use_precision=use_precision,
+            nemotron_quotas=nemotron_quotas,
+            nemotron_count_quotas=nemotron_count_quotas,
+            nemotron_region_level=nemotron_region_level,
+            nemotron_facets=nemotron_facets)
+        resume_from = 0
+        checkpoint_rows: list[dict] = []
+        branch_blanked: dict[str, int] = {}
+        cache_misses = 0
+        if checkpoint is not None:
+            if seed is None:
+                raise ValueError(
+                    "체크포인트 이어서 진행에는 seed가 필요합니다 "
+                    "(seed가 없으면 중단 전과 같은 페르소나·난수 순서를 "
+                    "재현할 수 없습니다).")
+            problems = _checkpoint_problems(checkpoint, fingerprint)
+            if problems:
+                raise ValueError(
+                    "체크포인트가 현재 생성 조건과 맞지 않아 이어서 "
+                    "진행할 수 없습니다: " + "; ".join(problems))
+            resume_from = int(checkpoint["completed_batches"])
+            checkpoint_rows = [dict(r) for r in checkpoint["rows"]]
+            branch_blanked = dict(checkpoint.get("branch_blanked") or {})
         ctx = GenerationContext(
             provider_id=provider_id,
             model=model,
@@ -527,7 +772,6 @@ class GenerationService:
         questions_by_id = {q.get("id"): q for q in questions if q.get("id")}
         question_order = [q.get("id") for q in questions if q.get("id")]
         branch = _compile_branch_rules(questions)
-        branch_blanked: dict[str, int] = {}
 
 
         # 문항 → 전략 매칭 (전략별 그룹)
@@ -536,74 +780,118 @@ class GenerationService:
             strategy = self._select_strategy(q, ctx)
             groups.setdefault(strategy.name, []).append(q)
 
-        rows: list[dict] = []
-        total_batches = (n + batch_size - 1) // batch_size
-        for b in range(total_batches):
-            bsize = min(batch_size, n - b * batch_size)
-            if persona_source == "nemotron":
-                personas = nemotron_panel[b * batch_size:(b + 1) * batch_size]
-                ctx.nemotron_records = personas
-            else:
-                personas = [sample_persona(persona_dims, rng)
-                            for _ in range(bsize)]
-
-            sampled: list[dict] = [{} for _ in range(bsize)]
-            for sname, qs in groups.items():
-                strategy = get_strategy(sname)
-                results = strategy.generate(ctx, qs, personas, rng)
-                for i, ans in enumerate(results):
-                    sampled[i].update(ans)
-
-
-            # 분기 적용: 해당 없음 문항을 공란으로 둔다 (전략 무관 단일 지점).
-            # 모든 전략 결과가 sampled에 합쳐진 뒤이므로 전략 종류와 무관하다.
-            if branch["requires"] or branch["skip_to"]:
-
-                for i in range(bsize):
-
-                    for qid, rule in branch["requires"].items():
-
-                        if not _branch_rule_applies(rule, sampled[i]):
-
-                            if not _is_blank_answer(sampled[i].get(qid, "")):
-
-                                sampled[i][qid] = ""
-                                branch_blanked[qid] = branch_blanked.get(qid, 0) + 1
-
-                    for src_qid, rule in branch["skip_to"].items():
-
-                        if _skip_trigger_matches(rule, sampled[i]):
-
-                            for mid_qid in _questions_between(
-                                    question_order, src_qid, rule["target"]):
-
-                                if not _is_blank_answer(sampled[i].get(mid_qid, "")):
-
-                                    sampled[i][mid_qid] = ""
-                                    branch_blanked[mid_qid] = branch_blanked.get(mid_qid, 0) + 1
-
-
-            for i, persona in enumerate(personas):
-
-                if persona_source == "nemotron":
-                    row = {
-                        "프로필_성별": persona.get("sex", ""),
-                        "프로필_연령대": persona.get("age_band", ""),
-                        "프로필_지역": persona.get("region", ""),
-                        "프로필_세부지역": persona.get("district", ""),
-                        "프로필_직업": persona.get("occupation", ""),
-                        "프로필_학력": persona.get("education_level", ""),
-                        "프로필_결혼상태": persona.get("marital_status", ""),
-                    }
-                else:
-                    row = {f"프로필_{dim}": val
-                           for dim, val in persona.items()}
-                for q in questions:
-                    row[q["id"]] = sampled[i].get(q["id"], "")
-                rows.append(row)
-
+        # rows는 체크포인트 행에서 이어받는다 (재개 시) — 새 배치를 뒤에 붙인다.
+        rows: list[dict] = list(checkpoint_rows)
+        if resume_from >= total_batches and total_batches > 0:
+            # 이미 전부 완료된 체크포인트 — LLM 호출 없이 저장된 행 그대로 반환.
             if progress_cb:
-                progress_cb((b + 1) / total_batches)
+                progress_cb(1.0)
+            self.last_checkpoint = dict(checkpoint)
+            resume_status = "already_complete"
+        else:
+            resume_status = "resumed" if resume_from else "fresh"
+            for b in range(total_batches):
+                bsize = min(batch_size, n - b * batch_size)
+                if persona_source == "nemotron":
+                    personas = nemotron_panel[b * batch_size:(b + 1) * batch_size]
+                    ctx.nemotron_records = personas
+                else:
+                    personas = [sample_persona(persona_dims, rng)
+                                for _ in range(bsize)]
+
+                if b < resume_from:
+                    # --- 이어서 진행: 완료 배치는 재생성 스킵 ---
+                    # 같은 코드 경로로 다시 실행해 페르소나·전략의 난수 소비만
+                    # 원래 순서대로 재현하고, 재생성된 행은 버린다.
+                    # 캐시에 프롬프트가 있으면 LLM 호출이 없고, 없으면 재호출
+                    # 건수를 cache_misses에 기록한다. 분기 적용은 난수를
+                    # 쓰지 않으므로 생략하고 체크포인트의 공란 건수를 쓴다.
+                    _keys_before = set(ctx.cache)
+                    for sname, qs in groups.items():
+                        strategy = get_strategy(sname)
+                        strategy.generate(ctx, qs, personas, rng)
+                    cache_misses += len(set(ctx.cache) - _keys_before)
+                    if progress_cb:
+                        progress_cb((b + 1) / total_batches)
+                    continue
+
+                sampled: list[dict] = [{} for _ in range(bsize)]
+                for sname, qs in groups.items():
+                    strategy = get_strategy(sname)
+                    results = strategy.generate(ctx, qs, personas, rng)
+                    for i, ans in enumerate(results):
+                        sampled[i].update(ans)
+
+
+                # 분기 적용: 해당 없음 문항을 공란으로 둔다 (전략 무관 단일 지점).
+                # 모든 전략 결과가 sampled에 합쳐진 뒤이므로 전략 종류와 무관하다.
+                if branch["requires"] or branch["skip_to"]:
+
+                    for i in range(bsize):
+
+                        for qid, rule in branch["requires"].items():
+
+                            if not _branch_rule_applies(rule, sampled[i]):
+
+                                if not _is_blank_answer(sampled[i].get(qid, "")):
+
+                                    sampled[i][qid] = ""
+                                    branch_blanked[qid] = branch_blanked.get(qid, 0) + 1
+
+                        for src_qid, rule in branch["skip_to"].items():
+
+                            if _skip_trigger_matches(rule, sampled[i]):
+
+                                for mid_qid in _questions_between(
+                                        question_order, src_qid, rule["target"]):
+
+                                    if not _is_blank_answer(sampled[i].get(mid_qid, "")):
+
+                                        sampled[i][mid_qid] = ""
+                                        branch_blanked[mid_qid] = branch_blanked.get(mid_qid, 0) + 1
+
+
+                for i, persona in enumerate(personas):
+
+                    if persona_source == "nemotron":
+                        row = {
+                            "프로필_성별": persona.get("sex", ""),
+                            "프로필_연령대": persona.get("age_band", ""),
+                            "프로필_지역": persona.get("region", ""),
+                            "프로필_세부지역": persona.get("district", ""),
+                            "프로필_직업": persona.get("occupation", ""),
+                            "프로필_학력": persona.get("education_level", ""),
+                            "프로필_결혼상태": persona.get("marital_status", ""),
+                        }
+                    else:
+                        row = {f"프로필_{dim}": val
+                               for dim, val in persona.items()}
+                    for q in questions:
+                        row[q["id"]] = sampled[i].get(q["id"], "")
+                    rows.append(row)
+
+                # --- 배치 완료 즉시 체크포인트 저장 ---
+                # 예외로 끊겨도 마지막 완료 배치까지는 남는다. app.py는
+                # checkpoint_cb로 이 스냅샷을 세션 상태에 저장한다.
+                # progress_cb보다 먼저 저장한다 — 진행률 표시에서 예외가
+                # 나도 막 완료된 배치는 잃지 않기 위함.
+                snap = _make_checkpoint(
+                    fingerprint, b + 1, rows, branch_blanked, cache_misses)
+                self.last_checkpoint = snap
+                if checkpoint_cb:
+                    checkpoint_cb(snap)
+
+                if progress_cb:
+                    progress_cb((b + 1) / total_batches)
+
+        self.last_resume_info = {
+            "resumed_batches": resume_from,
+            "cache_misses": cache_misses,
+            "cache_covered": cache_misses == 0,
+            "status": resume_status,
+            "status_text": (format_checkpoint_status(self.last_checkpoint)
+                            if self.last_checkpoint else ""),
+        }
 
         if persona_source == "nemotron":
             profile_cols = list(self.NEMOTRON_PROFILE_COLS)
@@ -615,6 +903,13 @@ class GenerationService:
 
         self.last_gen_meta = self._build_gen_meta(
             persona_source, nemotron_meta)
+        if resume_from:
+            # 이어서 진행 표시를 메타에도 남긴다 (화면·엑셀 메타에 그대로 뜬다).
+            self.last_gen_meta = dict(self.last_gen_meta or {})
+            self.last_gen_meta["이어서 진행"] = (
+                f"{resume_from}배치 완료 상태에서 이어서 진행"
+                + ("" if cache_misses == 0
+                   else f" (캐시 미커버 {cache_misses}건 LLM 재호출)"))
 
         # 분기 적용 메타: 적용된 규칙·공란 처리 건수·분기 문항별 유효 n.
         # "분기 스킵"은 app.py가 last_gen_meta를 그대로 화면·엑셀 메타에 합치므로

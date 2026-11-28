@@ -412,7 +412,7 @@ PROVIDER_SPECS = {
 
 # ----------------------------------------------------------------------------
 
-STRATEGY_ORDER = ["learned", "precision", "elicitation", "open_ended"]
+STRATEGY_ORDER = ["learned", "precision", "conditional", "elicitation", "open_ended"]
 
 
 # ----------------------------------------------------------------------------

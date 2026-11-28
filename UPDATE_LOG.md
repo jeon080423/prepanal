@@ -2,6 +2,22 @@
 
 이 파일은 PrePanel(가상응답자 스튜디오)의 모든 업데이트를 날짜순으로 남기는 기록이다. 코드 변경·문서 작성·결정 사항을 빠짐없이 적는다. 최신 항목이 위에 온다.
 
+## 2026-11-28
+
+- **묶음 수정: 파싱 재시도·Gemini thinking·조건부 연동·저장소 플립·배치 재개·키 라운드로빈 (2026-11-28)**
+  - 배경: 갤럽 684호 300명 베이스라인이 8회 전부 실패. 원인 2가지 코드 확인 — (1) strategies.py의 parse_json_array가 재시도 try 밖에 있어 파싱 실패 1회면 실행 전체 중단, (2) providers.py GeminiProvider._call_rest가 generationConfig에 temperature만 보내 thinkingConfig·maxOutputTokens·finishReason 검사가 없어 3.x thinking 토큰이 출력 예산 잠식 시 빈/절단 응답.
+  - (1) 파싱 재시도: `_call_with_retry()` 헬퍼 신설 — LLM 호출 + parse_json_array를 try 안에서 최대 3회 재시도. elicitation·precision·open_ended(동일 결함) 전부 적용.
+  - (2) Gemini thinking: generationConfig에 thinkingConfig `{"thinkingLevel": "LOW"}` + maxOutputTokens 8192 추가(temperature 유지). finishReason MAX_TOKENS·빈 candidates·빈 parts·토큰 상한 도달 시 재시도 가능 오류를 던져 키/모델 폴백이 탐. `LOW` 수용 여부는 실제 API 실측 전(300명 실행 전 스모크 호출 권장).
+  - (3) (b) ConditionalElicitationStrategy 신규 (`core/strategies.py`, 레지스트리 등록): 앵커 문항(지지정당·이념 성향) 먼저 분포추출 → 앵커 답변을 페르소나 텍스트에 부착 → 나머지 문항만 2차 호출로 앵커 조건부 확률 추정. 캐시 키에 앵커 포함. 학습 분포 문항은 조건부 prior로 처리, 없는 문항만 LLM 호출. (a) 프롬프트 확장(`_build_dist_prompt(anchor_conditional=True)`)은 2차 호출 실패 시 폴백. `config.py` STRATEGY_ORDER에 "conditional" 추가(순서 ["learned","precision","conditional","elicitation","open_ended"] — precision 앞에 두면 고정밀 모드 가려짐). 앵커 없으면 일반 분포추출과 동일 동작.
+  - (4) 저장소 플립 수정 (1순위): 메커니즘은 app.py:977-995 모듈 레벨 백엔드 선택 블록이 매 rerun마다 Sheets 프로브 성공 여부 하나로 `_project_store` 전역을 로컬↔Sheets 통째로 갈아끼운 것. 신규 `core/hybrid_projects.py` HybridProjectStore(Sheets ∪ 로컬 합집합, 백엔드 소유권 추적, 장애 중 편집은 로컬 안전본→복구 후 Sheets 동기화) + app.py 선택 블록만 감싸는 최소 변경. 시트 기존 행 수정·삭제·자동이관 없음.
+  - (5) 배치 중간 저장/재개: 배치 완료 시점마다 체크포인트 스냅샷(완료 배치 수·행·지문·분기 건수·캐시 미스)을 콜백으로 내보내고, 재개는 replay-skip(완료 배치를 같은 코드 경로로 다시 실행해 난수 소비만 재현, 행은 체크포인트 것 사용). 지문 불일치·seed 없는 재개는 ValueError. 앱에 "N배치 완료, 이어서 진행" 표시 + "처음부터 다시 생성" 버튼. 기존 app.py는 seed를 안 넘겨(seed=None) 재개가 원천 불가였음 — "생성 시작" 클릭 시 seed 1회 생성·세션 저장(gen_seed).
+  - (6) 키 라운드로빈: `AIProvider.generate`가 매 호출 시작 키를 순환(인스턴스 카운터). 429/503/404/타임아웃 시 다음 키 폴백 유지.
+  - 테스트: 전체 스위트 131 passed + 1 failed(기존 실패 test_extract_distribution_close_to_original — data/extract_metrics.json 부재, 베이스에서도 동일). 신규 테스트 41개 전부 통과(파싱 재시도·앵커 일관성·thinking/빈 응답·라운드로빈·429 폴백·플립 시뮬레이션·중단→재개 행 단위 동일). 앱 진입점 임포트 통과, use-before-definition 검사 통과.
+- **응답 상한 200→500 (2026-11-28, 커밋 86bcac02)**
+  - 이사님 확정 "상한 해제 후 300명 실행"에 따라 config.py MAX_RESPONDENTS 200→500. 랜딩 문구 "최대 200명"→"최대 500명"(히어로·스텝 카드·예시 카드·배지), 셀 쿼터 상한도 500으로 통일. 라이브 반영 확인(랜딩 "최대 500명" 확인, 구 문구 없음).
+- **2차 배포: A안 UI + B-2 KST + 5단계 KPI + 합성 표기 + 4단계 예상 시간 + 진단→개선 제안 DOCX (2026-11-28, 커밋 a8c903ce)**
+  - 스테퍼 라벨 변경("설문 설계 / 응답자 구성 / 실측 응답 학습(선택) / 가상 응답 생성 / 결과·진단"), 상단 메뉴를 "⋯ 더보기" 3항목으로 축소, "제품 소개"→"모델·대표성 안내" 개명, 저장 시각 KST 표시, 5단계 KPI, 합성 표기 `[합성 응답 · Pre-test]` 표준화, 4단계 예상 소요 시간(시간만), 진단→개선 제안 DOCX 버튼. 피주임 라이브 검증 통과(더보기·4단계 시간·DOCX·KPI·합성 표기·KST 정상).
+
 ## 2026-11-24
 
 - **좌측 사이드바 제거 → 프로젝트 관리로 통합 (2026-11-24)**

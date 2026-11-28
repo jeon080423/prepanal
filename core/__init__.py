@@ -11,6 +11,7 @@ from .persona import (build_persona_texts, clear_nemotron_cache,
                       persona_to_text, sample_nemotron_personas,
                       sample_persona, weighted_choice)
 from .projects import PROJECT_STATE_KEYS, ProjectStore
+from .hybrid_projects import HybridProjectStore
 from .sheets_projects import SheetsProjectStore
 from .providers import (AIProvider, PROVIDER_REGISTRY, UnknownProviderError,
                         auth_status, generate, get_provider, register_provider)
@@ -48,4 +49,5 @@ __all__ = [
     "Store", "MemoryStore", "SessionStore",
     # projects
     "ProjectStore", "PROJECT_STATE_KEYS", "SheetsProjectStore",
+    "HybridProjectStore",
 ]
