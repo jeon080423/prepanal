@@ -243,6 +243,8 @@ def init_state():
     store.set_default("learned_file", None)
     store.set_default("results_df", None)
     store.set_default("gen_meta", None)
+    store.set_default("gen_estimation", None)  # 워커 C: 추정 확률 계측
+    store.set_default("gen_execution", None)  # 워커 C: 실행 로그
     store.set_default("provider", "gemini")
     store.set_default("model_override", "")
     store.set_default("gen_cache", {})
@@ -1038,6 +1040,8 @@ def _load_project_to_store(pid: str):
         "learned_file": None,
         "results_df": None,
         "gen_meta": None,
+        "gen_estimation": None,
+        "gen_execution": None,
         "provider": "gemini",
     }
     for k in PROJECT_STATE_KEYS:
@@ -1118,6 +1122,8 @@ if st.session_state.pop("_fresh_after_verify", False):
         store.set("learned_file", None)
         store.set("results_df", None)
         store.set("gen_meta", None)
+        store.set("gen_estimation", None)
+        store.set("gen_execution", None)
         store.set("gen_cache", {})
         store.set("step", 1)
         store.set("page", "step1")
@@ -1947,7 +1953,8 @@ step = store.get("step")
 def _replace_questionnaire(questions):
     store.set("questions", questions)
     st.session_state["questionnaire_revision"] = st.session_state.get("questionnaire_revision", 0) + 1
-    for state_key in ("learned", "learned_file", "results_df", "gen_meta"):
+    for state_key in ("learned", "learned_file", "results_df", "gen_meta",
+                      "gen_estimation", "gen_execution"):
         store.set(state_key, None)
 
 def step1():
@@ -2668,6 +2675,10 @@ def step4():
                 if gen_service.last_gen_meta:
                     gen_meta.update(gen_service.last_gen_meta)
                 store.set("gen_meta", gen_meta)
+                # 워커 C: 추정 계측·실행 로그를 프로젝트 상태로 저장
+                # (step5 diagnose estimated 배선 + 재로드 후에도 유지).
+                store.set("gen_estimation", gen_service.last_estimation)
+                store.set("gen_execution", gen_service.last_execution)
                 store.set("gen_checkpoint", None)
                 store.set("gen_seed", None)
                 if (gen_service.last_resume_info
@@ -2784,7 +2795,9 @@ def step5():
             panel_ref = reference_distribution_from_records(load_nemotron_extract())
         except ValueError:
             panel_ref = None  # 발췌본 로드 실패 시 패널 진단은 생략
-    findings = diagnose(df, store.get("questions") or [], panel_reference=panel_ref)
+    _estimated = (store.get("gen_estimation") or {}).get("mean_estimated_probs")
+    findings = diagnose(df, store.get("questions") or [],
+                        panel_reference=panel_ref, estimated=_estimated)
     # 진단 결과를 스토어에 저장 (엑셀 다운로드에서 사용)
     store.set("diagnostics", findings)
 

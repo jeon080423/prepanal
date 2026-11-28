@@ -28,7 +28,7 @@ from typing import Callable
 from config import STRATEGY_ORDER
 from . import providers as providers_mod
 from .persona import build_persona_texts, persona_to_text
-from .question_types import get_question_type
+from .question_types import UNMATCHED_MASS_THRESHOLD, get_question_type
 
 
 class UnknownStrategyError(ValueError):
@@ -54,6 +54,12 @@ class GenerationContext:
     # Nemotron 측면 선택 (Phase 2): 프롬프트 조건으로 쓸 페르소나 측면.
     # None이면 기본값(요약+직업). 예: 식생활 조사면 family/culinary 추가.
     nemotron_facets: tuple[str, ...] | None = None
+    # 미매칭 질량 재시도(C0+C1) 계측: 레코드별 {qid: {보기: 확률}} /
+    # 레코드별 {qid: {raw키: 질량}}. services.py(워커 C)가 읽는다.
+    batch_estimates: list = field(default_factory=list)
+    batch_unmatched: list = field(default_factory=list)
+    # 마지막 _call_with_retry 호출의 시도 횟수(1-based).
+    last_call_attempts: int = 1
 
     def text_generate(self, prompt: str) -> str:
         fn = self.generate_fn or providers_mod.generate
@@ -100,12 +106,17 @@ def _check_batch(parsed: list, expected: int) -> list:
 
 
 def _call_with_retry(ctx: GenerationContext, prompt: str,
-                     expected: int) -> list:
+                     expected: int,
+                     check: Callable[[list], None] | None = None) -> list:
     """LLM 1회 호출 + JSON 파싱, 최대 3회 재시도.
 
     JSON 파싱 실패(ValueError)도 재시도 대상이다 (파싱이 try 밖에 있어
     1회 실패로 실행 전체가 중단되던 결함 수정). 재시도 시 캐시를 우회해
     새로 생성한다. 3회 전부 실패하면 마지막 오류를 던진다.
+
+    check이 주어지면 파싱·배치 검증 후 check(parsed)를 호출한다.
+    check이 ValueError를 던지면(예: 미매칭 질량 초과) 재시도한다.
+    매 시도 후 ctx.last_call_attempts에 시도 횟수(1-based)를 기록한다.
     """
     last_err: ValueError | None = None
     for attempt in range(3):
@@ -114,11 +125,44 @@ def _call_with_retry(ctx: GenerationContext, prompt: str,
                           None)
         raw = cached_generate(ctx, prompt)
         try:
-            return _check_batch(parse_json_array(raw), expected)
+            parsed = _check_batch(parse_json_array(raw), expected)
+            if check is not None:
+                check(parsed)
+            ctx.last_call_attempts = attempt + 1
+            return parsed
         except ValueError as e:
             last_err = e
+            ctx.last_call_attempts = attempt + 1
             continue
     raise last_err if last_err is not None else ValueError("LLM 호출 실패")
+
+
+def _make_unmatched_check(questions: list[dict]):
+    """미매칭 질량 검증 클로저 생성.
+
+    parsed의 각 레코드·각 문항마다 probs_from_elicited(새 튜플 계약)의
+    unmatched 질량 합을 계산하고, 어느 문항이든 합이
+    UNMATCHED_MASS_THRESHOLD를 초과하면 ValueError를 던진다.
+    다중선택은 문항별 독립 확률이므로 문항 단위로 합산한다.
+    """
+    def check(parsed: list) -> None:
+        for row in parsed:
+            if not isinstance(row, dict):
+                continue
+            for q in questions:
+                qtype = get_question_type(q["type"])
+                praw = row.get(q["id"], {})
+                if not isinstance(praw, dict):
+                    continue
+                _probs, unmatched = qtype.probs_from_elicited(q, praw)
+                total = sum(float(v) for v in unmatched.values())
+                if total > UNMATCHED_MASS_THRESHOLD:
+                    raise ValueError(
+                        f"문항 {q['id']}의 미매칭 질량 합이 {total:.3f}로 "
+                        f"임계값 {UNMATCHED_MASS_THRESHOLD}을(를) 초과했습니다. "
+                        "보기 키를 정확히 복사해 다시 시도해 주세요."
+                    )
+    return check
 
 
 def _build_dist_prompt(choice_questions: list[dict],
@@ -261,18 +305,26 @@ class DistributionElicitationStrategy(GenerationStrategy):
     def generate(self, ctx, questions, personas, rng) -> list[dict]:
         ptexts = self.persona_texts(ctx, personas, rng)
         # LLM 호출 + JSON 파싱, 최대 3회 재시도 (파싱 실패도 재시도 대상)
+        # 미매칭 질량 초과 시에도 check이 ValueError를 던져 재시도한다.
         parsed = _call_with_retry(
-            ctx, _build_dist_prompt(questions, ptexts), len(personas))
+            ctx, _build_dist_prompt(questions, ptexts), len(personas),
+            check=_make_unmatched_check(questions))
         out = []
         for i in range(len(personas)):
             ans = {}
             prow = parsed[i] if isinstance(parsed[i], dict) else {}
+            est_row: dict[str, dict[str, float]] = {}
+            unm_row: dict[str, dict[str, float]] = {}
             for q in questions:
                 qtype = get_question_type(q["type"])
                 praw = prow.get(q["id"], {})
-                probs = qtype.probs_from_elicited(
+                probs, unmatched = qtype.probs_from_elicited(
                     q, praw if isinstance(praw, dict) else {})
+                est_row[q["id"]] = probs
+                unm_row[q["id"]] = unmatched
                 ans[q["id"]] = qtype.sample_from_elicited(q, probs, rng)
+            ctx.batch_estimates.append(est_row)
+            ctx.batch_unmatched.append(unm_row)
             out.append(ans)
         return out
 
@@ -370,10 +422,11 @@ class ConditionalElicitationStrategy(DistributionElicitationStrategy):
         # 학습된 분포가 없는 문항: 2차 호출로 앵커 조건부 확률 추정
         llm_rest = [q for q in rest if not _has_learned_dist(q, ctx)]
         if llm_rest:
+            rest_check = _make_unmatched_check(llm_rest)
             try:
                 parsed = _call_with_retry(
                     ctx, _build_dist_prompt(llm_rest, cond_ptexts),
-                    len(personas))
+                    len(personas), check=rest_check)
             except ValueError:
                 # (a) 경량 폴백: 앵커 조건부 확률 요청을 명시한 확장
                 # 프롬프트로 재시도 (2차 호출 3회 전부 실패 시에만).
@@ -381,15 +434,21 @@ class ConditionalElicitationStrategy(DistributionElicitationStrategy):
                     ctx,
                     _build_dist_prompt(llm_rest, cond_ptexts,
                                        anchor_conditional=True),
-                    len(personas))
+                    len(personas), check=rest_check)
             for i in range(len(personas)):
                 prow = parsed[i] if isinstance(parsed[i], dict) else {}
+                est_row: dict[str, dict[str, float]] = {}
+                unm_row: dict[str, dict[str, float]] = {}
                 for q in llm_rest:
                     qtype = get_question_type(q["type"])
                     praw = prow.get(q["id"], {})
-                    probs = qtype.probs_from_elicited(
+                    probs, unmatched = qtype.probs_from_elicited(
                         q, praw if isinstance(praw, dict) else {})
+                    est_row[q["id"]] = probs
+                    unm_row[q["id"]] = unmatched
                     out[i][q["id"]] = qtype.sample_from_elicited(q, probs, rng)
+                ctx.batch_estimates.append(est_row)
+                ctx.batch_unmatched.append(unm_row)
         return out
 
     def _sample_anchors(self, ctx, anchors, ptexts, rng) -> list[dict]:
@@ -404,15 +463,22 @@ class ConditionalElicitationStrategy(DistributionElicitationStrategy):
                 out[i][q["id"]] = qtype.sample_from_learned(q, dist, rng)
         if llm_anchors:
             parsed = _call_with_retry(
-                ctx, _build_dist_prompt(llm_anchors, ptexts), len(ptexts))
+                ctx, _build_dist_prompt(llm_anchors, ptexts), len(ptexts),
+                check=_make_unmatched_check(llm_anchors))
             for i in range(len(ptexts)):
                 prow = parsed[i] if isinstance(parsed[i], dict) else {}
+                est_row: dict[str, dict[str, float]] = {}
+                unm_row: dict[str, dict[str, float]] = {}
                 for q in llm_anchors:
                     qtype = get_question_type(q["type"])
                     praw = prow.get(q["id"], {})
-                    probs = qtype.probs_from_elicited(
+                    probs, unmatched = qtype.probs_from_elicited(
                         q, praw if isinstance(praw, dict) else {})
+                    est_row[q["id"]] = probs
+                    unm_row[q["id"]] = unmatched
                     out[i][q["id"]] = qtype.sample_from_elicited(q, probs, rng)
+                ctx.batch_estimates.append(est_row)
+                ctx.batch_unmatched.append(unm_row)
         return out
 
 
@@ -430,8 +496,10 @@ class OpenEndedGenerationStrategy(GenerationStrategy):
     def generate(self, ctx, questions, personas, rng) -> list[dict]:
         ptexts = self.persona_texts(ctx, personas, rng)
         # LLM 호출 + JSON 파싱, 최대 3회 재시도 (파싱 실패도 재시도 대상)
+        # 주관식 값은 문자열이라 미매칭 check은 사실상 no-op이다.
         parsed = _call_with_retry(
-            ctx, _build_open_prompt(questions, ptexts), len(personas))
+            ctx, _build_open_prompt(questions, ptexts), len(personas),
+            check=_make_unmatched_check(questions))
         out = []
         for i in range(len(personas)):
             ans = {}

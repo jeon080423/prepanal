@@ -108,6 +108,8 @@ class AIProvider(ABC):
 
         self._last_start_key_index = -1  # 마지막 generate()의 시작 키 인덱스 (관찰용)
 
+        self._last_fallback_used = False  # 마지막 generate()에서 키 폴백(다음 키로 전환)이 있었는지 (관찰용)
+
     # -- 사용자 API 키 ------------------------------------------------------
 
     def set_custom_key(self, api_key: str) -> None:
@@ -295,6 +297,13 @@ class AIProvider(ABC):
 
         model = model or self.default_model
 
+        # 실행 로그용 관찰 상태 초기화: 호출 시작 시마다 False로 되돌린다.
+        # CLI 경로로 바로 반환되는 경우에도 폴백 없음(False)이 보고되며,
+        # 시작 인덱스도 -1로 되돌려 이전 호출의 값이 남지 않게 한다.
+        self._last_fallback_used = False
+
+        self._last_start_key_index = -1
+
         if self.cli_path and os.path.exists(self.cli_path):
 
             self.last_used_model = model
@@ -330,7 +339,14 @@ class AIProvider(ABC):
 
         ordered_keys = [(start_key + i) % n_keys for i in range(n_keys)]
 
-        for key_idx in ordered_keys:
+        for key_pos, key_idx in enumerate(ordered_keys):
+
+            # key_pos > 0에 도달했다는 것은 이전 키의 모든 후보 모델이
+            # 재시도 가능 오류로 실패해 다음 키로 넘어왔다는 뜻이다.
+            # 같은 키 안에서의 모델 전환은 키 폴백이 아니므로 False를 유지한다.
+            if key_pos > 0:
+
+                self._last_fallback_used = True
 
             api_key = api_keys[key_idx]
 
@@ -803,6 +819,43 @@ def _build_default_registry() -> None:
 _build_default_registry()
 
 
+# -- 마지막 호출 실행 정보 (워커 C가 services.py에서 읽어 result["execution"]에 남김) --
+
+LAST_CALL_INFO: dict = {"start_key_index": None, "fallback_used": False}
+
+
+def get_last_call_info() -> dict:
+
+    """마지막 generate() 호출의 실행 정보를 복사본으로 반환한다."""
+
+    return dict(LAST_CALL_INFO)
+
+
+def _update_last_call_info(provider) -> None:
+
+    """provider 인스턴스의 관찰 속성을 읽어 LAST_CALL_INFO를 갱신한다.
+
+    해당 속성이 없는 provider(구형/더미 인스턴스)에도 getattr으로 방어한다.
+
+    _last_start_key_index == -1은 '키 기반 호출이 아님'(CLI 경로 등)을 뜻하므로
+
+    None으로 정규화한다.
+
+    """
+
+    start = getattr(provider, "_last_start_key_index", None)
+
+    if isinstance(start, int) and start < 0:
+
+        start = None
+
+    LAST_CALL_INFO["start_key_index"] = start
+
+    LAST_CALL_INFO["fallback_used"] = bool(
+
+        getattr(provider, "_last_fallback_used", False))
+
+
 # -- 하위 호환 진입점 (호출부는 레지스트리로 위임, 이름 분기 없음) -------------
 
 def generate(provider_id: str, prompt: str, model: str | None = None,
@@ -824,15 +877,21 @@ def generate(provider_id: str, prompt: str, model: str | None = None,
 
     try:
 
-        return provider.generate(prompt, model, timeout, temperature)
+        result = provider.generate(prompt, model, timeout, temperature)
+
+        _update_last_call_info(provider)
+
+        return result
 
     except RuntimeError as e:
 
         err = str(e).lower()
 
-        # 전환 대상 오류가 아니면 그대로 전파
+        # 전환 대상 오류가 아니면 그대로 전파 (실행 정보는 남기고 전파)
 
         if not _is_retryable_error(err):
+
+            _update_last_call_info(provider)
 
             raise
 
@@ -850,19 +909,26 @@ def generate(provider_id: str, prompt: str, model: str | None = None,
 
                 result = other.generate(prompt, None, timeout, temperature)
 
-                # 실제 사용된 provider 추적
+                # 실제 사용된 provider 추적 (더미 provider에는
+                # last_used_model이 없을 수 있어 getattr으로 방어한다)
 
                 provider.last_used_model = (
 
-                    f"{other.label} ({other.last_used_model}) [자동 전환]"
+                    f"{other.label} ({getattr(other, 'last_used_model', '')}) [자동 전환]"
 
                 )
+
+                # 실제로 생성에 성공한 provider의 실행 정보를 남긴다.
+
+                _update_last_call_info(other)
 
                 return result
 
             except RuntimeError:
 
                 continue
+
+        _update_last_call_info(provider)
 
         raise RuntimeError(
 

@@ -117,8 +117,9 @@ def main() -> None:
                 for q in choice_qs:
                     qtype = get_question_type(q["type"])
                     raw = prow.get(q["id"], {}) if isinstance(prow, dict) else {}
-                    entry[q["id"]] = qtype.probs_from_elicited(
+                    _probs, _unmatched = qtype.probs_from_elicited(
                         q, raw if isinstance(raw, dict) else {})
+                    entry[q["id"]] = _probs
                 elicited.append(entry)
     print(f"추출 분포 복원: {len(elicited)}건 (기대 {N}건)")
     (BASE / "elicited_baseline.json").write_text(

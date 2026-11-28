@@ -36,6 +36,8 @@ PROJECT_STATE_KEYS = [
     "learned_file",
     "results_df",   # DataFrame → records로 변환
     "gen_meta",
+    "gen_estimation",  # 워커 C: 추정 확률 계측 (프로젝트 저장 포함)
+    "gen_execution",  # 워커 C: 실행 로그 (프로젝트 저장 포함)
     "provider",
 ]
 

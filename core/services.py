@@ -617,8 +617,103 @@ def _make_checkpoint(fingerprint: dict, completed_batches: int,
 
 # ----------------------------------------------------------------------------
 
-# 가상 응답 생성 (전략 오케스트레이션)
+# ----------------------------------------------------------------------------
+# 추정 확률 계측 헬퍼 (2차 캘리브레이션 C0+C1, 워커 C)
+#
+# 워커 B가 GenerationContext에 추가하는 필드(batch_estimates·
+# batch_unmatched·last_call_attempts)를 방어적으로 읽는다 — 베이스
+# strategies.py에는 이 필드가 없어 getattr 기본값으로 동작한다.
+# 필드 형태 가정 (NOTES.md 참조): batch_estimates는 응답자별
+# {qid: {보기: 확률}} dict 목록, batch_unmatched는 {raw키: 질량} dict,
+# last_call_attempts는 이번 호출의 시도 횟수(1 = 재시도 없음).
+# ----------------------------------------------------------------------------
+def _ctx_estimates_snapshot(ctx) -> tuple[int, dict | int]:
+    """배치 전 ctx 추정 계측 스냅샷 (델타 계산용)."""
+    est = getattr(ctx, "batch_estimates", None)
+    n_est = len(est) if isinstance(est, list) else 0
+    unm = getattr(ctx, "batch_unmatched", None)
+    if isinstance(unm, dict):
+        unm_snap: dict | int = {k: float(v) for k, v in unm.items()}
+    elif isinstance(unm, list):
+        unm_snap = len(unm)
+    else:
+        unm_snap = {}
+    return n_est, unm_snap
 
+
+def _ctx_estimates_delta(ctx, snapshot) -> tuple[list[dict], dict[str, float]]:
+    """스냅샷 이후 ctx에 새로 쌓인 추정·미매칭 델타를 반환한다."""
+    n_before, unm_before = snapshot
+    est = getattr(ctx, "batch_estimates", None)
+    new_est: list[dict] = []
+    if isinstance(est, list):
+        new_est = [e for e in est[n_before:] if isinstance(e, dict)]
+    elif isinstance(est, dict):
+        # 배치 단위 dict 1건으로 쌓는 형태면 통째로 1표본으로 본다.
+        new_est = [est]
+    unm = getattr(ctx, "batch_unmatched", None)
+    delta: dict[str, float] = {}
+    if isinstance(unm, dict) and isinstance(unm_before, dict):
+        for k, v in unm.items():
+            d = float(v) - float(unm_before.get(k, 0.0))
+            if d:
+                delta[str(k)] = d
+    elif isinstance(unm, list) and isinstance(unm_before, int):
+        for e in unm[unm_before:]:
+            if isinstance(e, dict):
+                for k, v in e.items():
+                    # 워커 B 형태: {qid: {raw키: 질량}} (중첩). 평탄 {raw키: 질량}도 허용.
+                    if isinstance(v, dict):
+                        for rk, rv in v.items():
+                            delta[str(rk)] = delta.get(str(rk), 0.0) + float(rv)
+                    else:
+                        delta[str(k)] = delta.get(str(k), 0.0) + float(v)
+    return new_est, delta
+
+
+def _merge_estimates(sums: dict[str, dict[str, float]],
+                     counts: dict[str, int],
+                     estimates: list[dict]) -> None:
+    """응답자별 추정 dict 목록을 문항별 합/건수에 누적한다."""
+    for row in estimates:
+        for qid, probs in row.items():
+            if not isinstance(probs, dict) or not probs:
+                continue
+            counts[str(qid)] = counts.get(str(qid), 0) + 1
+            acc = sums.setdefault(str(qid), {})
+            for opt, p in probs.items():
+                try:
+                    acc[str(opt)] = acc.get(str(opt), 0.0) + float(p)
+                except (TypeError, ValueError):
+                    continue
+
+
+def _read_execution_info() -> dict:
+    """providers.get_last_call_info() 방어적 읽기 (워커 D).
+
+    함수가 아직 없으면(ImportError/AttributeError/예외) 기본값
+    {"fallback_used": False, "key_start_index": None}을 반환한다 —
+    여기서 False는 '폴백 미사용 확인'이 아니라 '보고 없음'과 같은
+    뜻이다 (NOTES.md 참조).
+    """
+    try:
+        from . import providers as _providers
+        info = _providers.get_last_call_info()
+    except Exception:
+        return {"fallback_used": False, "key_start_index": None}
+    if not isinstance(info, dict):
+        return {"fallback_used": False, "key_start_index": None}
+    try:
+        ksi = info.get("start_key_index")
+        ksi = int(ksi) if ksi is not None else None
+    except (TypeError, ValueError):
+        ksi = None
+    return {"fallback_used": bool(info.get("fallback_used", False)),
+            "key_start_index": ksi}
+
+
+# ----------------------------------------------------------------------------
+# 가상 응답 생성 (전략 오케스트레이션)
 # ----------------------------------------------------------------------------
 class GenerationService:
     def __init__(self, strategy_order: list[str] | None = None) -> None:
@@ -640,6 +735,16 @@ class GenerationService:
         # 마지막 생성의 재개 정보: {"resumed_batches", "cache_misses",
         # "cache_covered", "status", "status_text"}.
         self.last_resume_info: dict | None = None
+        # 추정 확률 계측 (2차 캘리브레이션 C0+C1, 워커 C):
+        # generate_responses()가 채운다. {"mean_estimated_probs",
+        # "unmatched": {"keys", "total_mass"}, "retry_counts"}.
+        # 반환값이 DataFrame이라 dict로 바꿀 수 없어 (app.py 2634행·
+        # _save_current_project·step5가 DataFrame을 기대함) 이 속성과
+        # last_gen_meta 요약으로 노출한다.
+        self.last_estimation: dict | None = None
+        # 실행 로그 (워커 D의 providers.get_last_call_info() 방어적 읽기):
+        # {"fallback_used": bool, "key_start_index": int | None}.
+        self.last_execution: dict | None = None
 
 
     # Nemotron 모드의 프로필 컬럼 순서 (직접 모드의 persona_dims 대응)
@@ -780,6 +885,15 @@ class GenerationService:
             strategy = self._select_strategy(q, ctx)
             groups.setdefault(strategy.name, []).append(q)
 
+        # 추정 확률 계측 누적기 (워커 C): fresh 배치의 델타만 합산한다.
+        # 재개로 다시 실행되는 완료 배치는 행을 버리므로 추정치도
+        # 합산하지 않는다 (이중 집계 방지). 재시도 횟수는 실행된
+        # 모든 배치(재개 재생성 포함)에 대해 배치당 1개씩 기록한다.
+        est_sums: dict[str, dict[str, float]] = {}
+        est_counts: dict[str, int] = {}
+        unmatched_keys: dict[str, float] = {}
+        retry_counts: list[int] = []
+
         # rows는 체크포인트 행에서 이어받는다 (재개 시) — 새 배치를 뒤에 붙인다.
         rows: list[dict] = list(checkpoint_rows)
         if resume_from >= total_batches and total_batches > 0:
@@ -807,20 +921,51 @@ class GenerationService:
                     # 건수를 cache_misses에 기록한다. 분기 적용은 난수를
                     # 쓰지 않으므로 생략하고 체크포인트의 공란 건수를 쓴다.
                     _keys_before = set(ctx.cache)
+                    _est_snap = _ctx_estimates_snapshot(ctx)
+                    _max_attempts = 0
                     for sname, qs in groups.items():
                         strategy = get_strategy(sname)
+                        try:
+                            ctx.last_call_attempts = None
+                        except Exception:
+                            pass
                         strategy.generate(ctx, qs, personas, rng)
+                        _att = getattr(ctx, "last_call_attempts", None)
+                        if (isinstance(_att, int)
+                                and not isinstance(_att, bool)
+                                and _att > _max_attempts):
+                            _max_attempts = _att
+                    # 재생성 배치는 행·추정치를 버리지만, 이번 실행에서
+                    # 실제로 돌린 호출의 재시도 횟수는 기록한다.
+                    retry_counts.append(max(0, _max_attempts - 1))
                     cache_misses += len(set(ctx.cache) - _keys_before)
                     if progress_cb:
                         progress_cb((b + 1) / total_batches)
                     continue
 
                 sampled: list[dict] = [{} for _ in range(bsize)]
+                _est_snap = _ctx_estimates_snapshot(ctx)
+                _max_attempts = 0
                 for sname, qs in groups.items():
                     strategy = get_strategy(sname)
+                    try:
+                        ctx.last_call_attempts = None
+                    except Exception:
+                        pass
                     results = strategy.generate(ctx, qs, personas, rng)
+                    _att = getattr(ctx, "last_call_attempts", None)
+                    if (isinstance(_att, int)
+                            and not isinstance(_att, bool)
+                            and _att > _max_attempts):
+                        _max_attempts = _att
                     for i, ans in enumerate(results):
                         sampled[i].update(ans)
+                # fresh 배치 델타만 계측에 합산한다.
+                _new_est, _unm_delta = _ctx_estimates_delta(ctx, _est_snap)
+                _merge_estimates(est_sums, est_counts, _new_est)
+                for _k, _v in _unm_delta.items():
+                    unmatched_keys[_k] = unmatched_keys.get(_k, 0.0) + _v
+                retry_counts.append(max(0, _max_attempts - 1))
 
 
                 # 분기 적용: 해당 없음 문항을 공란으로 둔다 (전략 무관 단일 지점).
@@ -901,8 +1046,42 @@ class GenerationService:
         df = pd.DataFrame(rows)
         df = df[[c for c in col_order if c in df.columns]]
 
+        # 추정 확률 계측 확정 (워커 C) — fresh 배치 델타 합산 결과.
+        mean_estimated_probs = {
+            qid: {opt: total / est_counts[qid]
+                  for opt, total in opts.items()}
+            for qid, opts in est_sums.items()
+            if est_counts.get(qid, 0) > 0
+        }
+        unmatched_total = float(sum(unmatched_keys.values()))
+        self.last_estimation = {
+            "mean_estimated_probs": mean_estimated_probs,
+            "unmatched": {"keys": dict(unmatched_keys),
+                          "total_mass": unmatched_total},
+            "retry_counts": list(retry_counts),
+        }
+        self.last_execution = _read_execution_info()
+
         self.last_gen_meta = self._build_gen_meta(
             persona_source, nemotron_meta)
+        # 추정 계측 요약 (화면·엑셀 메타에 그대로 뜬다 — app.py 수정 없이
+        # gen_meta → 프로젝트 저장 → 엑셀 메타 경로를 탄다).
+        if (mean_estimated_probs or unmatched_total > 0
+                or sum(retry_counts) > 0):
+            _top_unm = sorted(unmatched_keys.items(),
+                              key=lambda kv: -kv[1])[:3]
+            _unm_txt = "; ".join(f"'{k}' {v:.3f}" for k, v in _top_unm)
+            self.last_gen_meta["추정 계측"] = (
+                f"평균 추정확률 문항 {len(mean_estimated_probs)}개; "
+                f"미매칭 질량 총 {unmatched_total:.3f}"
+                + (f" ({_unm_txt})" if _unm_txt else "")
+                + f"; 재시도 총 {sum(retry_counts)}회 / {len(retry_counts)}배치"
+            )
+        if (self.last_execution or {}).get("fallback_used"):
+            self.last_gen_meta["실행"] = (
+                "폴백 키 사용 "
+                f"(시작 키 인덱스 {self.last_execution.get('key_start_index')})"
+            )
         if resume_from:
             # 이어서 진행 표시를 메타에도 남긴다 (화면·엑셀 메타에 그대로 뜬다).
             self.last_gen_meta = dict(self.last_gen_meta or {})

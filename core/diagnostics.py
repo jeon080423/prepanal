@@ -27,6 +27,10 @@ SHORT_ANSWER_LEN = 5          # 서술형 주관식 5자 미만은 부실 응답
 
 SHORT_ANSWER_RATIO = 0.3      # 부실 응답 30% 이상이면 문제
 
+# 구조적 0 판정 임계값 — 추정확률이 이 값 이상인데 출현 0건이면 플래그.
+# question_types.UNMATCHED_MASS_THRESHOLD(= 0.02, 워커 A)와 동일 값.
+STRUCTURAL_ZERO_THRESHOLD = 0.02
+
 
 # 숫자·금액형 주관식 응답에 붙을 수 있는 단위 접미사.
 # "4명", "12000원", "12,000원", "3회", "1.5시간"처럼 숫자에 단위가 붙은 답은
@@ -83,7 +87,8 @@ def _is_numeric_answer(value: str) -> bool:
 
 def diagnose(df: pd.DataFrame, questions: list[dict],
                panel_reference: dict[str, dict[str, float]] | None = None,
-               panel_threshold_pp: float = PANEL_POPULATION_DIFF_THRESHOLD_PP
+               panel_threshold_pp: float = PANEL_POPULATION_DIFF_THRESHOLD_PP,
+               estimated: dict[str, dict[str, float]] | None = None
                ) -> list[dict]:
     """데이터프레임과 문항 목록을 받아 진단 결과 리스트를 반환.
 
@@ -100,6 +105,14 @@ def diagnose(df: pd.DataFrame, questions: list[dict],
         차이가 panel_threshold_pp(기본 5%p) 이상인 셀이 있으면
         심각도 "참고"로 보고한다 — 응답 품질 판단이 아니라 패널 구성의
         투명성을 위한 것이다.
+
+    estimated (2차 캘리브레이션 C0+C1, 선택 사항): 문항 id →
+        {보기: 평균 추정확률}. None이면 이 진단을 건너뛴다 (기존 동작
+        그대로). 주어지면 선택형 문항마다 추정확률이
+        STRUCTURAL_ZERO_THRESHOLD(0.02) 이상인데 df에서 출현 0건인
+        보기에 대해 '보기 미출현(구조적 0)' finding을 추가한다 —
+        모델 회피가 아니라 매칭 손실(정확 일치 실패 시 0 반환 후
+        재정규화)일 수 있다는 신호다.
 
     """
     findings: list[dict] = []
@@ -172,6 +185,39 @@ def diagnose(df: pd.DataFrame, questions: list[dict],
                     "해결책": "질문을 더 구체적으로 바꾸거나 예시를 제시하세요. 예: '구체적으로 어떤 점이...'",
                     "심각도": "중간",
                 })
+
+        # 3b. 보기 미출현(구조적 0) — 추정확률은 있는데 df에서 출현 0건.
+        #     모델 회피가 아니라 매칭 손실일 수 있다. estimated가 None이면
+        #     건너뛴다 (기존 호출부 동작 유지). 다중선택은 "A, B" 형태의
+        #     결합 답 안에 보기가 토큰으로 들어 있으면 출현으로 본다.
+        if estimated and qtype in ("single", "likert", "multiple"):
+            est = estimated.get(qid)
+            if isinstance(est, dict):
+                if qtype == "multiple":
+                    present: set[str] = set()
+                    for v in answered:
+                        present.update(
+                            t.strip() for t in re.split(r"[,;]", str(v))
+                            if t.strip())
+                else:
+                    present = set(answered.unique())
+                for opt in (q.get("options") or []):
+                    try:
+                        p = float(est.get(str(opt), 0.0))
+                    except (TypeError, ValueError):
+                        continue
+                    if (p >= STRUCTURAL_ZERO_THRESHOLD
+                            and str(opt) not in present):
+                        findings.append({
+                            "문항": qtext,
+                            "문제": "보기 미출현(구조적 0)",
+                            "근거": (f"'{opt}' 보기 평균 추정확률 {p*100:.1f}%인데 "
+                                     f"출현 0건 (응답 {len(answered)}건 중) — 매칭 손실 의심"),
+                            "해결책": ("추정 확률과 매칭 결과를 확인하세요. 미매칭 질량(unmatched)과 "
+                                       "재시도 기록을 보고, 보기 표기(공백·괄호·번호)가 LLM 출력과 "
+                                       "일치하는지 점검하세요."),
+                            "심각도": "높음",
+                        })
 
 
     # 4. 전체 동일 응답 패턴 (2개 이상 문항이 있을 때만 의미 있음)
