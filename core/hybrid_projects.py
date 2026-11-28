@@ -30,6 +30,11 @@ project_id를 Sheets 목록 첫 항목으로 바꿔 버려, 사용자에게는 �
 - Sheets 장애 "중"에는 Sheets 전용 프로젝트를 읽을 수 없다(읽을 방법이
   없음). 장애가 끝나면 다시 보인다. 미저장 인메모리 편집은 플립 시
   덮어씌워질 수 있다 — 저장된 내용은 안전하다.
+- 저장 429 처리 (B-2, 2026-11-28): 주 저장은 429일 때만 지수 백오프로
+  최대 3회 재시도하고, 그래도 실패하면 로컬 폴백에 저장한 뒤
+  last_save_degraded=True로 알린다. 재시도 중에는 주 인스턴스를
+  버리지 않는다. is_list_degraded()는 마지막 목록 조회가 주 장애로
+  불완전했는지 알려준다(app.py의 프로젝트 선택 폴백 가드용).
 - 로컬 안전본의 이름 유지를 위해 마지막으로 본 합집합 메타(이름·소유권만,
   상태 데이터 없음)를 로컬에 캐시한다. 캐시 파일은 `*.json`이 아니므로
   ProjectStore의 목록 glob에 걸리지 않는다.
@@ -40,8 +45,33 @@ project_id를 Sheets 목록 첫 항목으로 바꿔 버려, 사용자에게는 �
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Callable
+
+# 저장 429 재시도: 최대 시도 횟수·시도 간 대기(초, 지수 백오프).
+# 테스트에서 SAVE_RETRY_DELAYS를 (0, 0)으로 패치해 대기 없이 검증한다.
+SAVE_MAX_ATTEMPTS = 3
+SAVE_RETRY_DELAYS = (0.5, 1.0)
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """429(할당량 초과) 계열 에러인지 판정. gspread APIError는 code=429를
+    갖고, 메시지에도 '429'·'Quota exceeded'가 들어간다."""
+    if getattr(exc, "code", None) == 429:
+        return True
+    text = str(exc)
+    return ("429" in text or "rateLimitExceeded" in text
+            or "Quota exceeded" in text)
+
+
+def _format_error(exc: BaseException) -> str:
+    """에러를 한 줄로 표기. code 속성(예: gspread APIError 429)이
+    있으면 메시지 앞에 붙여 429 여부를 문자열만으로 알 수 있게 한다."""
+    code = getattr(exc, "code", None)
+    if code is not None:
+        return f"{type(exc).__name__} {code}: {exc}"
+    return f"{type(exc).__name__}: {exc}"
 
 # 마지막으로 본 합집합 메타 캐시 (이름·소유권만 저장, 상태 데이터 없음).
 # ProjectStore.list_projects()가 *.json을 glob하므로 확장자를 붙이지 않는다.
@@ -67,6 +97,9 @@ class HybridProjectStore:
         self._owner: dict[str, str] = {}  # project_id -> "primary" | "local"
         self._last_known: dict[str, dict] = {}  # project_id -> 마지막 합집합 메타
         self._diverged: set[str] = set()  # 양쪽에 있고 로컬이 더 새로운 ID
+        # 결함 1 (워커 A): 체크포인트만 로컬 폴백에 남은 ID — 주 저장이
+        # 실패해 로컬에 체크포인트를 썼고, 복구 후 동기화가 필요한 상태.
+        self._checkpoint_diverged: set[str] = set()
         # M-1: 마지막으로 주(Sheets) 목록에서 본 적 있는 ID. 분 단위
         # 타임스탬프 동점으로는 diverged를 잡지 못하므로, 저장 시점에
         # "Sheets에 있던 프로젝트를 로컬에 저장했다"는 사실 자체로
@@ -74,6 +107,10 @@ class HybridProjectStore:
         self._known_primary: set[str] = set()
         self._owners_live = False     # 이 인스턴스에서 주 목록을 생으로 본 적 있는지
         self.primary_available: bool | None = None  # 마지막 주 시도 결과
+        # B-2: 마지막 저장 시도 결과. 주 저장 실패 후 로컬 폴백으로
+        # 저장됐으면 last_save_degraded=True (app.py가 사용자에게 알린다).
+        self.last_save_degraded: bool = False
+        self.last_save_error: str | None = None
         self._cache_path: Path | None = None
         if fallback is not None and hasattr(fallback, "dir"):
             try:
@@ -110,6 +147,10 @@ class HybridProjectStore:
         if isinstance(cached_diverged, list):
             self._diverged = {pid for pid in cached_diverged
                               if isinstance(pid, str)}
+        cached_cp_diverged = raw.get("__checkpoint_diverged__")
+        if isinstance(cached_cp_diverged, list):
+            self._checkpoint_diverged = {pid for pid in cached_cp_diverged
+                                         if isinstance(pid, str)}
         cached_known = raw.get("__known_primary__")
         if isinstance(cached_known, list):
             self._known_primary = {pid for pid in cached_known
@@ -125,6 +166,8 @@ class HybridProjectStore:
                 for pid, meta in self._last_known.items()
             }
             payload["__diverged__"] = sorted(self._diverged)
+            payload["__checkpoint_diverged__"] = sorted(
+                self._checkpoint_diverged)
             payload["__known_primary__"] = sorted(self._known_primary)
             self._cache_path.write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -146,6 +189,43 @@ class HybridProjectStore:
     def _drop_primary(self):
         """주 저장소 인스턴스 버리기 — 다음 시도에 새로 만든다."""
         self._primary = None
+
+    def _primary_save(self, project_id: str, state: dict) -> None:
+        """주 저장소에 저장. 429면 지수 백오프로 재시도한다.
+
+        재시도 중에는 주 인스턴스를 버리지 않는다(_drop_primary 금지):
+        같은 클라이언트로 다시 시도해야 스토어 플립 없이 복구된다.
+        최종 실패 시 마지막 예외를 던진다(호출부가 로컬 폴백으로 간다).
+        429가 아닌 에러는 재시도하지 않는다.
+        """
+        primary = self._get_primary()
+        if primary is None:
+            raise RuntimeError("주 저장소가 설정되지 않았습니다.")
+        last_exc: Exception | None = None
+        for attempt in range(1, SAVE_MAX_ATTEMPTS + 1):
+            try:
+                primary.save_project(project_id, state)
+                return
+            except Exception as e:  # noqa: BLE001 — 재시도 판정 후 폴백
+                last_exc = e
+                if (not _is_rate_limit_error(e)
+                        or attempt >= SAVE_MAX_ATTEMPTS):
+                    raise
+                delay = SAVE_RETRY_DELAYS[min(
+                    attempt - 1, len(SAVE_RETRY_DELAYS) - 1)]
+                time.sleep(delay)
+        if last_exc is not None:
+            raise last_exc
+
+    def is_list_degraded(self) -> bool:
+        """마지막 프로젝트 목록 조회가 불완전한지(주 저장소 장애 중) 반환.
+
+        primary_factory가 없으면(로컬 전용) 목록은 완전하므로 False.
+        primary_available이 False면 주 목록 조회를 실패한 상태라
+        목록이 로컬만으로 구성됐을 수 있다.
+        """
+        return (self._primary_factory is not None
+                and self.primary_available is False)
 
     def _primary_list(self) -> list[dict]:
         """주 목록 조회. 실패 시 예외를 그대로 던진다(호출부에서 처리)."""
@@ -285,6 +365,14 @@ class HybridProjectStore:
                 pid = primary.create_project(clean_name)
                 self._owner[pid] = "primary"
                 return pid
+            except ValueError:
+                # 결함 3 (피주임 [554]): 중복 이름·빈 이름 같은 비즈니스 규칙
+                # 거부는 일시 장애가 아니다. 그대로 삼켜 로컬 폴백으로
+                # 넘어가면 같은 이름의 행이 하나 더 생긴다. 상단 중복 검사가
+                # 주 목록 429로 시트 행을 못 본 바로 그 경우에 주의
+                # ValueError가 마지막 방어선인데, except Exception이 이를
+                # 삼켜 로컬에 동명 프로젝트를 만들었다. 전파한다.
+                raise
             except Exception:
                 # 주 생성 실패(429 등) → 로컬에 만든다. 다음 목록 조회에서
                 # 합집합에 포함되므로 복구 후에도 사라지지 않는다.
@@ -297,6 +385,10 @@ class HybridProjectStore:
         return pid
 
     def save_project(self, project_id: str, state: dict) -> None:
+        # B-2: 저장 시도 결과를 매번 초기화한다. 주 실패 → 로컬 폴백이면
+        # last_save_degraded=True로 남겨 app.py가 사용자에게 알린다.
+        self.last_save_degraded = False
+        self.last_save_error = None
         # 소유 백엔드를 먼저 확정한다. 모르는 ID를 주에 저장하면 시트에
         # "새 프로젝트" 행이 append되므로, 소유권 없는 저장은 금지한다.
         owner = self._owner_of(project_id)
@@ -304,16 +396,18 @@ class HybridProjectStore:
             primary = self._get_primary()
             if primary is not None:
                 try:
-                    primary.save_project(project_id, state)
+                    self._primary_save(project_id, state)
                     return
-                except Exception:
-                    # 주 저장 실패 → 로컬에 안전본을 남기고 소유권을 옮긴다.
-                    # 다음 load는 로컬 본을 찾아낸다. 안전본을 썼다는 사실
-                    # 자체를 diverged로 기록해 캐시에 남긴다(분 단위 동점
-                    # 때도 복구 후 최신본을 읽기 위해).
+                except Exception as e:
+                    # 주 저장 실패(429 재시도 포함) → 로컬에 안전본을 남기고
+                    # 소유권을 옮긴다. 다음 load는 로컬 본을 찾아낸다.
+                    # 안전본을 썼다는 사실 자체를 diverged로 기록해 캐시에
+                    # 남긴다(분 단위 동점 때도 복구 후 최신본을 읽기 위해).
                     self._drop_primary()
                     self.primary_available = False
                     self._diverged.add(project_id)
+                    self.last_save_degraded = True
+                    self.last_save_error = _format_error(e)
             if self._fallback is not None:
                 self._fallback.save_project(project_id, state)
                 self._owner[project_id] = "local"
@@ -345,25 +439,31 @@ class HybridProjectStore:
                     primary = self._get_primary()
                     if primary is not None:
                         try:
-                            primary.save_project(project_id, state)
+                            self._primary_save(project_id, state)
                             self._owner[project_id] = "primary"
                             self._diverged.discard(project_id)
                             self._save_cache()
-                        except Exception:
+                        except Exception as e:
+                            # 로컬 저장은 이미 성공 — Sheets 동기화만 실패했으므로
+                            # degraded로 표시한다(다음 저장 때 다시 시도).
                             self._drop_primary()
                             self.primary_available = False
+                            self.last_save_degraded = True
+                            self.last_save_error = _format_error(e)
                 return
             raise RuntimeError("프로젝트를 저장할 저장소가 없습니다.")
         # 소유권 불명(목록에 없던 새 ID): 주가 살아 있으면 주, 아니면 로컬.
         primary = self._get_primary()
         if primary is not None:
             try:
-                primary.save_project(project_id, state)
+                self._primary_save(project_id, state)
                 self._owner[project_id] = "primary"
                 return
-            except Exception:
+            except Exception as e:
                 self._drop_primary()
                 self.primary_available = False
+                self.last_save_degraded = True
+                self.last_save_error = _format_error(e)
         if self._fallback is None:
             raise RuntimeError("프로젝트를 저장할 저장소가 없습니다.")
         self._fallback.save_project(project_id, state)
@@ -372,6 +472,134 @@ class HybridProjectStore:
         # 장애 중 첫 안전본 저장이 이 분기로 오는 경우가 있다(로컬 사본이
         # 아직 없어 목록 합집합에 안 잡힐 때).
         self._mark_diverged_if_known_primary(project_id)
+
+    # ------------------------------------------------------------------
+    # 체크포인트 전용 경로 (결함 1, 워커 A)
+    #
+    # 배치 중간 저장/재개 체크포인트 + gen_seed를 프로젝트 전체 상태와
+    # 분리해 가볍게 저장한다. save_project()는 상태 전체를 통째로 다시
+    # 쓰므로 배치마다 부르면 429를 유발한다 — 체크포인트는 배치당 1회,
+    # 체크포인트 JSON만 전용 경로로 쓴다.
+    #   - 주(Sheets) 우선. 실패(429 등)하면 로컬 폴백에 남기고
+    #     diverged로 기록한다.
+    #   - 로딩 시 양쪽을 비교해 updated_at이 더 새로운 쪽을 쓴다
+    #     (동점은 주 우선). 로컬 폴백이 더 새로우면 주에도 되돌려
+    #     동기화한다 (번들-3 HybridProjectStore 패턴).
+    #   - 주 백엔드에 체크포인트 메서드가 없는 구형 객체면 로컬만 쓴다.
+    # ------------------------------------------------------------------
+    def _primary_checkpoint_method(self, name: str):
+        """주 백엔드의 체크포인트 메서드. 없으면 None."""
+        primary = self._get_primary()
+        if primary is None:
+            return None
+        meth = getattr(primary, name, None)
+        return meth if callable(meth) else None
+
+    def _fallback_checkpoint_method(self, name: str):
+        """로컬 백엔드의 체크포인트 메서드. 없으면 None."""
+        if self._fallback is None:
+            return None
+        meth = getattr(self._fallback, name, None)
+        return meth if callable(meth) else None
+
+    def save_checkpoint(self, project_id: str, checkpoint: dict,
+                        gen_seed=None) -> None:
+        primary_save = self._primary_checkpoint_method("save_checkpoint")
+        if primary_save is not None:
+            try:
+                primary_save(project_id, checkpoint, gen_seed)
+                self.primary_available = True
+                self._checkpoint_diverged.discard(project_id)
+                self._save_cache()
+                return
+            except Exception:
+                self._drop_primary()
+                self.primary_available = False
+        fallback_save = self._fallback_checkpoint_method("save_checkpoint")
+        if fallback_save is not None:
+            fallback_save(project_id, checkpoint, gen_seed)
+            if self._primary_factory is not None:
+                self._checkpoint_diverged.add(project_id)
+                self._save_cache()
+            return
+        raise RuntimeError("체크포인트를 저장할 저장소가 없습니다.")
+
+    def load_checkpoint(self, project_id: str) -> dict | None:
+        """저장된 체크포인트 payload 반환. 없으면 None.
+
+        payload 형태: {"checkpoint": {...}, "gen_seed": int | None,
+        "updated_at": "YYYY-MM-DD HH:MM"}.
+        """
+        primary_payload = None
+        primary_ok = False
+        primary_load = self._primary_checkpoint_method("load_checkpoint")
+        if primary_load is not None:
+            try:
+                primary_payload = primary_load(project_id)
+                primary_ok = True
+                self.primary_available = True
+            except Exception:
+                self._drop_primary()
+                self.primary_available = False
+        fallback_payload = None
+        fallback_load = self._fallback_checkpoint_method("load_checkpoint")
+        if fallback_load is not None:
+            try:
+                fallback_payload = fallback_load(project_id)
+            except Exception:
+                fallback_payload = None
+        if primary_payload is None:
+            chosen = fallback_payload
+        elif fallback_payload is None:
+            chosen = primary_payload
+        elif (str(fallback_payload.get("updated_at", ""))
+                > str(primary_payload.get("updated_at", ""))):
+            chosen = fallback_payload
+        else:
+            chosen = primary_payload
+        if (chosen is fallback_payload and fallback_payload is not None
+                and project_id in self._checkpoint_diverged and primary_ok):
+            # 복구 후 동기화: 로컬 폴백이 더 새로우면 주에도 되돌린다.
+            primary_save = self._primary_checkpoint_method(
+                "save_checkpoint")
+            if primary_save is not None:
+                try:
+                    primary_save(project_id,
+                                 fallback_payload.get("checkpoint"),
+                                 fallback_payload.get("gen_seed"))
+                    self._checkpoint_diverged.discard(project_id)
+                    self._save_cache()
+                except Exception:
+                    self._drop_primary()
+                    self.primary_available = False
+        return chosen
+
+    def delete_checkpoint(self, project_id: str) -> None:
+        """체크포인트 삭제 (양쪽 모두 시도, 둘 다 실패 시에만 예외)."""
+        errors: list[Exception] = []
+        attempted = 0
+        primary_delete = self._primary_checkpoint_method(
+            "delete_checkpoint")
+        if primary_delete is not None:
+            attempted += 1
+            try:
+                primary_delete(project_id)
+            except Exception as e:  # noqa: BLE001 — 다른 쪽은 계속 시도
+                self._drop_primary()
+                self.primary_available = False
+                errors.append(e)
+        fallback_delete = self._fallback_checkpoint_method(
+            "delete_checkpoint")
+        if fallback_delete is not None:
+            attempted += 1
+            try:
+                fallback_delete(project_id)
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+        self._checkpoint_diverged.discard(project_id)
+        self._save_cache()
+        if attempted and len(errors) == attempted:
+            raise errors[0]
 
     def load_project(self, project_id: str) -> dict:
         # 소유 백엔드 우선, 비어 있으면 다른 쪽을 본다.

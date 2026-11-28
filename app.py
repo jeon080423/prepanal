@@ -1004,22 +1004,118 @@ if SheetsProjectStore.is_configured():
         primary_factory=SheetsProjectStore, fallback=ProjectStore())
 
 
-def _save_current_project():
+def _is_project_list_degraded() -> bool:
+    """마지막 프로젝트 목록 조회가 불완전했는지(429 등 주 저장소 장애) 반환.
+    HybridProjectStore가 아니면 목록은 완전한 것으로 본다.
+
+    주의: test_save_429의 선택 블록 샌드박스가 이 함수 소스만 따로
+    exec하므로, 본문은 다른 모듈 전역 이름에 의존하지 않게 둔다.
+    인자 버전이 필요하면 _create_first_project() 안의 인라인 판정을 쓸 것.
+    """
+    fn = getattr(_project_store, "is_list_degraded", None)
+    try:
+        return bool(fn()) if callable(fn) else False
+    except Exception:
+        return False
+
+
+def _is_state_effectively_empty(state: dict) -> bool:
+    """저장하려는 상태에 사용자 작업 내용이 전혀 없는지 반환.
+    페르소나 기본값만으로는 내용이 있다고 보지 않는다 — 문항·쿼터·
+    학습 결과·생성 결과 중 하나라도 있으면 비어 있지 않다."""
+    if not isinstance(state, dict):
+        return True
+    if state.get("questions"):
+        return False
+    if state.get("transcripts"):
+        return False
+    if state.get("learned"):
+        return False
+    if state.get("results_df") is not None:
+        return False
+    if state.get("gen_meta"):
+        return False
+    if state.get("nemotron_quotas"):
+        return False
+    return True
+
+
+def _save_current_project() -> str:
+    """현재 프로젝트를 저장한다. 저장 결과를 상태 문자열로 반환한다.
+
+    - "ok": 저장 성공 (저장 지점 _last_saved_fp/_last_saved_at 갱신)
+    - "degraded": Sheets 저장 실패(429 등) 후 로컬 폴백에 임시 저장됨.
+      다음 저장 때 HybridProjectStore가 Sheets 행으로 되돌린다(동기화).
+      저장 지점을 갱신하지 않으므로 자동 저장이 복구 후 다시 시도한다.
+    - "failed": 주·로컬 모두 실패. 저장 지점 미갱신 + 에러 표시.
+    - "blocked": 빈 상태로 기존 행을 덮어쓰지 않도록 저장 중단.
+    - "no-project": 저장할 프로젝트가 없음.
+    """
     pid = store.get("project_id")
     if not pid:
-        return
+        return "no-project"
     state = {k: store.get(k) for k in PROJECT_STATE_KEYS}
     # 모델 선택도 저장
     prov_id = store.get("provider")
     state["model_select"] = store.get(f"model_select_{prov_id}")
-    _project_store.save_project(pid, state)
-    # 저장 상태 기록 (지속 표시·dirty 판정용)
+    # 빈 상태 덮어쓰기 방지: 저장하려는 상태가 비어 있고 마지막으로
+    # 저장된(또는 불러온) 상태가 비어 있지 않았다면, stale한 빈 상태로
+    # 기존 행을 지우지 않고 저장을 중단한다.
+    if _is_state_effectively_empty(state):
+        saved_fp = st.session_state.get("_last_saved_fp")
+        if saved_fp and saved_fp != _state_fingerprint(state):
+            st.warning(
+                "저장을 중단했습니다: 현재 상태가 비어 있어 기존 프로젝트 "
+                "내용을 덮어쓰지 않았습니다. 페이지를 새로고침해 저장된 "
+                "내용을 다시 불러온 뒤 저장해 주세요."
+            )
+            return "blocked"
+        if not saved_fp:
+            # 저장 지점 기록이 없으면 저장본을 직접 확인한다.
+            # (조회 실패 시에는 확인할 방법이 없으므로 저장을 막지 않는다.)
+            try:
+                existing = _project_store.load_project(pid)
+            except Exception:
+                existing = None
+            if existing and not _is_state_effectively_empty(existing):
+                st.warning(
+                    "저장을 중단했습니다: 현재 상태가 비어 있어 기존 프로젝트 "
+                    "내용을 덮어쓰지 않았습니다. 페이지를 새로고침해 저장된 "
+                    "내용을 다시 불러온 뒤 저장해 주세요."
+                )
+                return "blocked"
+    try:
+        _project_store.save_project(pid, state)
+    except Exception as e:
+        # 주·로컬 모두 실패 — 저장된 것처럼 보이면 안 된다.
+        msg = (f"저장 실패 — 다시 시도해 주세요. "
+               f"({type(e).__name__}: {str(e)[:100]})")
+        st.session_state["_save_error"] = msg
+        st.session_state.pop("_save_degraded", None)
+        st.session_state.pop("_save_degraded_msg", None)
+        st.error(msg)
+        return "failed"
+    if getattr(_project_store, "last_save_degraded", False):
+        # Sheets 실패 → 로컬 임시 저장. 복구 후 자동 동기화되지만,
+        # Sheets에 아직 안 올라갔으므로 저장 완료로 표시하지 않는다.
+        msg = ("Sheets 저장 실패(429) — 로컬에 임시 저장했습니다. "
+               "연결이 복구되면 다음 저장 때 자동으로 동기화됩니다.")
+        st.session_state["_save_degraded"] = True
+        st.session_state["_save_degraded_msg"] = msg
+        st.session_state.pop("_save_error", None)
+        st.warning(msg)
+        return "degraded"
+    # 성공 시에만 저장 지점을 갱신한다.
+    st.session_state.pop("_save_error", None)
+    st.session_state.pop("_save_degraded", None)
+    st.session_state.pop("_save_degraded_msg", None)
     st.session_state["_last_saved_pid"] = pid
     st.session_state["_last_saved_at"] = _fmt_kst_now()
     # 이 시각은 앱이 KST로 찍은 값이다. 시트에서 읽어온 updated_at과는
     # 출처가 다르므로 표시 시 'KST'를 붙인다 (B-2).
     st.session_state["_last_saved_at_kst"] = True
     st.session_state["_last_saved_fp"] = _state_fingerprint(state)
+    return "ok"
 
 
 def _load_project_to_store(pid: str):
@@ -1057,6 +1153,23 @@ def _load_project_to_store(pid: str):
     store.set("page", "step1")
     # 결과 관련 캐시 초기화
     store.set("gen_cache", {})
+    # 결함 1 (워커 A): durable 체크포인트 복원 — 새로고침·재로그인 후에도
+    # 4단계에 "N배치 완료, 이어서 진행"이 뜨게 한다. 지문 검증은 4단계
+    # 표시부(checkpoint_matches)가 담당하므로 여기서는 저장된 기록을
+    # 그대로 세션으로 복원만 한다. 기록이 없으면 세션 값도 비워 다른
+    # 프로젝트의 중단 기록이 남지 않게 한다. 읽기 실패가 프로젝트
+    # 불러오기를 막지 않는다 (최선 노력).
+    try:
+        _durable = _project_store.load_checkpoint(pid)
+        if isinstance(_durable, dict) and _durable.get("checkpoint"):
+            store.set("gen_checkpoint", _durable["checkpoint"])
+            store.set("gen_seed", _durable.get("gen_seed"))
+        else:
+            store.set("gen_checkpoint", None)
+            store.set("gen_seed", None)
+    except Exception:
+        store.set("gen_checkpoint", None)
+        store.set("gen_seed", None)
     # 불러온 상태는 저장된 상태와 동일하므로 저장 지점을 기록
     st.session_state["_last_saved_pid"] = pid
     try:
@@ -1079,83 +1192,231 @@ def _load_project_to_store(pid: str):
         st.session_state["_last_saved_at_kst"] = False
 
 
+def _resolve_project_after_login(project_store, session_project_id):
+    """로그인/새로고침 후 열 프로젝트를 정한다. 빈 프로젝트를 자동 생성하지 않는다.
+
+    (a) 세션의 project_id가 목록에 있으면 그대로 유지한다.
+    (b) 없으면 가장 최근에 수정된 기존 프로젝트를 불러온다
+        (list_projects()는 updated_at 내림차순 정렬).
+    (c) 프로젝트가 하나도 없을 때만 (None, True)를 돌려주고, 호출부가
+        빈 프로젝트 1개를 만든다.
+
+    결함 3 (피주임 [554]) 수정: 예전 코드는 코드 입력 때마다 무조건
+    create_project("새 프로젝트")를 먼저 시도했다.
+
+    주의: (None, True)는 "목록이 비어 보였다"는 뜻이지 "프로젝트가
+    정말 0개"라는 확정은 아니다. 목록이 불완전하면(429 중) 비어 보일
+    수 있으므로, 호출부는 생성 전에 degraded 가드(M-1)를 적용해야 한다.
+    _handle_fresh_after_verify()가 그 가드를 둔다.
+    """
+    projects = project_store.list_projects()
+    ids = {p["id"] for p in projects}
+    if session_project_id and session_project_id in ids:
+        return session_project_id, False
+    if projects:
+        return projects[0]["id"], False
+    return None, True
+
+
+def _create_first_project(project_store):
+    """프로젝트 0개일 때만 쓰는 최초 1개 생성. (pid, is_new) 튜플을 반환한다.
+
+    - is_new=True: 새로 만든 빈 프로젝트 — 호출부는
+      _init_blank_project_state()로 빈 초기 상태를 세팅한다.
+    - is_new=False: 경합으로 이미 있던 "새 프로젝트" 행을 재사용 —
+      호출부는 빈 초기화를 절대 하지 않고 _load_project_to_store()로
+      저장된 내용을 불러온다 (C-1: 재사용 행에 빈 초기화를 하면 후속
+      저장 때 해당 프로젝트의 저장 내용이 통째로 덮어씌워진다).
+    - (None, False): 목록이 여전히 불완전해(429 중) 재사용 대상을
+      확정할 수 없고 새 이름 생성도 믿을 수 없을 때 — 호출부는
+      생성·선택을 보류한다.
+
+    "새 프로젝트"를 만들고, 목록 조회와 생성 사이에 다른 세션이 먼저
+    만들었을 때의 ValueError(경합)는 다시 조회해 이름이 "새 프로젝트"인
+    행만 재사용한다 (strip + casefold — create_project의 중복 판정과
+    같은 기준). 재조회 첫 항목을 이름과 무관하게 반환하지 않는다 (C-1:
+    가장 최근에 수정된 다른 프로젝트를 골라 그 내용을 빈 상태로 덮을
+    수 있다). 이름이 맞는 행이 없으면 타임스탬프 고유 이름으로 1개만
+    만든다 — 명시적 생성 시의 기존 고유 이름 동작 유지.
+    """
+    try:
+        return project_store.create_project("새 프로젝트"), True
+    except ValueError:
+        again = project_store.list_projects()
+        for _p in again:
+            if _p.get("name", "").strip().casefold() == "새 프로젝트":
+                return _p["id"], False
+        _degraded_fn = getattr(project_store, "is_list_degraded", None)
+        try:
+            _still_degraded = (bool(_degraded_fn())
+                               if callable(_degraded_fn) else False)
+        except Exception:
+            _still_degraded = False
+        if _still_degraded:
+            # 재조회 목록이 여전히 불완전하면(429 중) "이름 맞는 행이
+            # 없다"는 것을 단정할 수 없다 — 타임스탬프 생성을 보류한다.
+            return None, False
+        return project_store.create_project(
+            f"새 프로젝트 {_now_kst().strftime('%m%d-%H%M')}"
+        ), True
+
+
+def _init_blank_project_state(new_pid):
+    """새로 만든 빈 프로젝트의 초기 상태 세팅 (신규 생성 직후에만 사용).
+
+    기존 행 재사용 경로에서는 절대 호출하지 않는다 — 빈 상태를 세팅한 뒤
+    자동 저장이 돌면 저장된 데이터가 사라진다 (B-1).
+    배경: SheetsProjectStore.save_project()는 기존 행의 E:Z를 지우고
+    현재 상태를 통째로 쓰므로, 기존 행을 재사용하면서 빈 상태를 세팅한 뒤
+    goto()/goto_page()의 자동 저장이 돌면 저장된 데이터가 사라진다.
+    """
+    store.set("project_id", new_pid)
+    store.set("questions", [])
+    store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
+    store.set("persona_source", "nemotron")
+    store.set("nemotron_quotas", None)
+    store.set("nemotron_quota_mode", "ratio")
+    store.set("nemotron_count_quotas", None)
+    store.set("nemotron_region_level", "region")
+    store.set("nemotron_facets", None)
+    store.set("transcripts", [])
+    store.set("use_precision", False)
+    store.set("learned", None)
+    store.set("learned_file", None)
+    store.set("results_df", None)
+    store.set("gen_meta", None)
+    store.set("gen_estimation", None)
+    store.set("gen_execution", None)
+    store.set("gen_cache", {})
+    store.set("step", 1)
+    store.set("page", "step1")
+    # 새로 만든 빈 프로젝트는 빈 상태가 곧 저장된 상태다. 저장 지점을
+    # 지금 기록해 두면 직후 자동 저장이 빈 상태로 시트를 다시 쓰는
+    # 일을 하지 않고, dirty 판정도 바로 안정된다 (B-4 flicker 방지).
+    st.session_state["_last_saved_pid"] = new_pid
+    st.session_state["_last_saved_at"] = _fmt_kst_now()
+    st.session_state["_last_saved_at_kst"] = True
+    try:
+        st.session_state["_last_saved_fp"] = _state_fingerprint(
+            _current_state_snapshot()
+        )
+    except Exception:
+        st.session_state["_last_saved_fp"] = ""
+
+
+def _handle_fresh_after_verify():
+    """코드 입력 직후 1회 실행되는 프로젝트 선택. 현재 project_id 반환.
+
+    결함 3 수정: 로그인/새로고침 때마다 빈 '새 프로젝트'를 만들지 않는다.
+    (a) 세션 project_id 유효 → 그대로 유지 (메모리 상태·저장 지점을
+    건드리지 않고 다시 불러오지도 않는다).
+    (b) 없으면 가장 최근에 수정된 기존 프로젝트를 불러온다.
+    (c) 프로젝트가 하나도 없을 때만 빈 프로젝트 1개를 만든다.
+    (c-신규) 새로 만든 경우에만 _init_blank_project_state()로 빈 초기
+    상태를 세팅하고, (c-재사용) 경합으로 기존 "새 프로젝트" 행을
+    재사용한 경우에는 _load_project_to_store()로 저장된 내용을 불러오고
+    빈 값 세팅을 하지 않는다 (B-1, C-1). _load_project_to_store()가
+    저장 지점(_last_saved_pid/_last_saved_fp)도 함께 기록하므로, 직후
+    자동 저장은 불러온 내용과 동일한 상태를 쓴다.
+
+    M-1 degraded 가드: 세션 project_id가 없을 때 목록이 불완전하면
+    (429 중) "0개"로 단정해 최초 생성을 시도하지 않는다. 일시 장애가
+    회복됐는지 목록을 한 번 더 확인하고, 여전히 불완전하면 생성·선택을
+    보류하고 None을 반환한다 (경고 표시). 회복된 경우에는 아래
+    _create_first_project()가 중복 검사로 재확인하므로, 회복 확인용
+    목록 조회 결과 자체는 선택에 쓰지 않는다 — 가장 최근 항목을
+    고르면 C-1의 다른 프로젝트를 고를 수 있다.
+
+    통합 가드 (결함 2×3): 목록 조회가 불완전하면(429 등) 세션의 project_id가
+    목록에 안 보여도 그대로 유지하고, 다른 프로젝트를 불러오거나 빈
+    프로젝트를 만들지 않는다. 불완전한 목록에서 고른 '최근 프로젝트'는
+    실제 최근이 아닐 수 있다.
+    """
+    _session_pid = store.get("project_id")
+    if _session_pid and _is_project_list_degraded():
+        return _session_pid
+    pid, create_first = _resolve_project_after_login(
+        _project_store, store.get("project_id"))
+    if create_first:
+        if _is_project_list_degraded():
+            # M-1: "0개" 단정을 보류하고 회복 여부를 한 번 더 확인한다.
+            try:
+                _project_store.list_projects()
+            except Exception:
+                pass
+            if _is_project_list_degraded():
+                st.warning(
+                    "프로젝트 목록을 불러오지 못했습니다(Google Sheets 연결 "
+                    "일시 끊김). 목록이 복구될 때까지 프로젝트 생성·선택을 "
+                    "보류합니다. 잠시 뒤 새로고침해 주세요."
+                )
+                return None
+        new_pid, is_new = _create_first_project(_project_store)
+        if new_pid is None:
+            # _create_first_project()가 목록 불완전을 이유로 보류함.
+            st.warning(
+                "프로젝트 목록을 불러오지 못했습니다(Google Sheets 연결 "
+                "일시 끊김). 목록이 복구될 때까지 프로젝트 생성·선택을 "
+                "보류합니다. 잠시 뒤 새로고침해 주세요."
+            )
+            return None
+        if is_new:
+            _init_blank_project_state(new_pid)
+        else:
+            _load_project_to_store(new_pid)
+        return new_pid
+    if pid is None:
+        return None
+    if pid == store.get("project_id"):
+        return pid
+    _load_project_to_store(pid)
+    return pid
+
+
 # 기존 프로젝트 재사용: 접속마다 빈 프로젝트를 자동으로 추가하지 않는다.
-# 코드 입력 직후에는 '새 프로젝트' 행이 있으면 그 내용을 불러오고,
-# 없을 때만 새로 만든다. 빈 상태로 기존 행을 덮어쓰지 않는다 (B-1).
+# 코드 입력 직후에는 _handle_fresh_after_verify()가 (a) 세션 유지 /
+# (b) 최근 프로젝트 불러오기 / (c) 0개일 때만 최초 1개 생성을 정한다.
+# 빈 상태로 기존 행을 덮어쓰지 않는다 (B-1).
 projects = _project_store.list_projects()
 current_pid = store.get("project_id")
 project_ids = [p["id"] for p in projects]
 if st.session_state.pop("_fresh_after_verify", False):
-    # 코드 입력 직후: 기존 '새 프로젝트' 행이 있으면 그 내용을 불러오고,
-    # 없을 때만 새로 만든다. 빈 상태로 기존 행을 덮어쓰지 않는다 (B-1).
-    # 배경: SheetsProjectStore.save_project()는 기존 행의 E:Z를 지우고
-    # 현재 상태를 통째로 쓰므로, 기존 행을 재사용하면서 빈 상태를 세팅한 뒤
-    # goto()/goto_page()의 자동 저장이 돌면 저장된 데이터가 사라진다.
-    # 그래서 재사용 경로는 _load_project_to_store()로 기존 내용을 불러오고,
-    # 빈 상태 세팅은 '새로 만든 직후'에만 한다.
-    _fresh_is_new = True
-    try:
-        new_pid = _project_store.create_project("새 프로젝트")
-    except ValueError:
-        existing = [p for p in projects if p.get("name") == "새 프로젝트"]
-        new_pid = existing[0]["id"] if existing else project_ids[0] if project_ids else None
-        if new_pid is None:
-            # 프로젝트가 하나도 없으면 타임스탬프로 고유 이름 생성
-            new_pid = _project_store.create_project(
-                f"새 프로젝트 {_now_kst().strftime('%m%d-%H%M')}"
-            )
-        else:
-            _fresh_is_new = False
-    if _fresh_is_new:
-        store.set("project_id", new_pid)
-        store.set("questions", [])
-        store.set("persona_dims", {k: dict(v) for k, v in DEFAULT_PERSONA.items()})
-        store.set("persona_source", "nemotron")
-        store.set("nemotron_quotas", None)
-        store.set("nemotron_quota_mode", "ratio")
-        store.set("nemotron_count_quotas", None)
-        store.set("nemotron_region_level", "region")
-        store.set("nemotron_facets", None)
-        store.set("transcripts", [])
-        store.set("use_precision", False)
-        store.set("learned", None)
-        store.set("learned_file", None)
-        store.set("results_df", None)
-        store.set("gen_meta", None)
-        store.set("gen_estimation", None)
-        store.set("gen_execution", None)
-        store.set("gen_cache", {})
-        store.set("step", 1)
-        store.set("page", "step1")
-        # 새로 만든 빈 프로젝트는 빈 상태가 곧 저장된 상태다. 저장 지점을
-        # 지금 기록해 두면 직후 자동 저장이 빈 상태로 시트를 다시 쓰는
-        # 일을 하지 않고, dirty 판정도 바로 안정된다 (B-4 flicker 방지).
-        st.session_state["_last_saved_pid"] = new_pid
-        st.session_state["_last_saved_at"] = _fmt_kst_now()
-        st.session_state["_last_saved_at_kst"] = True
-        try:
-            st.session_state["_last_saved_fp"] = _state_fingerprint(
-                _current_state_snapshot()
-            )
-        except Exception:
-            st.session_state["_last_saved_fp"] = ""
-    else:
-        # 기존 행 재사용: 빈 값으로 세팅하지 않고 저장된 내용을 그대로 불러온다.
-        # _load_project_to_store()가 저장 지점(_last_saved_pid/_last_saved_fp)도
-        # 함께 기록하므로, 직후 자동 저장은 불러온 내용과 동일한 상태를 쓴다.
-        _load_project_to_store(new_pid)
+    # 코드 입력 직후: 새로고침·재로그인 때 빈 프로젝트를 자동 생성하지
+    # 않는다 (결함 3). 선택은 _handle_fresh_after_verify()가 정한다.
+    current_pid = _handle_fresh_after_verify()
     projects = _project_store.list_projects()
-    current_pid = new_pid
+    project_ids = [p["id"] for p in projects]
 elif not is_code_verified():
     # 코드 입력 전: 기존 작업을 불러오지 않음
     current_pid = None
     store.set("project_id", None)
 elif projects and current_pid not in project_ids:
-    current_pid = projects[0]["id"]
-    _load_project_to_store(current_pid)
+    if _is_project_list_degraded():
+        # B-2: 429 등으로 목록이 불완전하면 세션의 현재 프로젝트를 유지한다.
+        # 목록에 없는 것이 삭제가 아니라 조회 실패일 수 있고, 다른
+        # 프로젝트 데이터를 로드하면 그 프로젝트를 덮어쓸 위험이 있다.
+        st.warning(
+            "프로젝트 목록을 불러오지 못했습니다(Google Sheets 연결 일시 "
+            "끊김). 현재 프로젝트를 유지합니다."
+        )
+    else:
+        current_pid = projects[0]["id"]
+        _load_project_to_store(current_pid)
 elif not projects:
-    current_pid = None
-    store.set("project_id", None)
+    if current_pid and _is_project_list_degraded():
+        # B-2: 429로 목록이 비어 보여도 세션의 현재 프로젝트를 유지한다.
+        st.warning(
+            "프로젝트 목록을 불러오지 못했습니다(Google Sheets 연결 일시 "
+            "끊김). 현재 프로젝트를 유지합니다."
+        )
+    else:
+        current_pid = None
+        store.set("project_id", None)
+
+
+# 목록 조회가 불완전했는지(429 등) — 아래 '프로젝트가 없습니다' UI도 같은
+# 신호로 가드한다. 선택 블록 이후·헤더 렌더링 이전에 확정한다.
+_projects_list_degraded = _is_project_list_degraded()
 
 
 # 액세스 코드 입력란이 흰 배경에 묻히지 않도록 검정색을 명시한다.
@@ -1868,8 +2129,10 @@ def _render_header():
             st.rerun()
     with c_save:
         if st.button("💾 저장", key="btn_save_project", use_container_width=True):
-            _save_current_project()
-            st.success("저장되었습니다.")
+            # 성공 시에만 저장 완료를 표시한다. 실패·임시 저장은
+            # _save_current_project()가 직접 경고/에러로 알린다.
+            if _save_current_project() == "ok":
+                st.success("저장되었습니다.")
     with c_help:
         if st.button("?", key="btn_help_theory", use_container_width=True, help="이론적 배경"):
             theory_dialog()
@@ -2577,12 +2840,29 @@ def step4():
     )
     st.info(f"예상 소요 시간 {_est_label}")
     st.caption(_est_tip)
-    # 배치 재개 상태 (워커 D): 중단된 생성 기록이 있으면 표시한다.
-    # 새 외부 저장소 없이 세션 상태의 체크포인트 + 기존 gen_cache만 쓴다.
+    # 배치 재개 상태 (워커 D + 결함 1 워커 A): 중단된 생성 기록이 있으면 표시한다.
+    # 체크포인트는 세션 상태가 아니라 durable 저장소(HybridProjectStore의
+    # 체크포인트 전용 경로)에 남는다 — 새로고침 후에도 복원된다.
+    # 세션의 gen_cache(LLM 캐시)만 세션 전용이다 (없어도 재개는 되고
+    # cache_misses로 재호출이 기록된다).
     from core.services import (build_checkpoint_fingerprint,
                                checkpoint_matches, format_checkpoint_status)
     from config import DEFAULT_BATCH_SIZE
     _resume_cp = store.get("gen_checkpoint")
+    if _resume_cp is None and store.get("project_id"):
+        # 세션에 없으면 durable 저장소에서 복원한다 (새로고침 직후).
+        # _load_project_to_store()가 이미 복원하는 것이 정상 경로지만,
+        # 여기도 한 번 더 확인해 재개 UI가 뜨지 않는 경우를 없앤다.
+        # 실패해도 생성 화면을 막지 않는다 (최선 노력).
+        try:
+            _durable = _project_store.load_checkpoint(
+                store.get("project_id"))
+            if isinstance(_durable, dict) and _durable.get("checkpoint"):
+                _resume_cp = _durable["checkpoint"]
+                store.set("gen_checkpoint", _resume_cp)
+                store.set("gen_seed", _durable.get("gen_seed"))
+        except Exception:
+            pass
     _resume_ok = False
     if _resume_cp:
         _resume_fp = build_checkpoint_fingerprint(
@@ -2613,6 +2893,14 @@ def step4():
         if st.button("처음부터 다시 생성", disabled=not can_run):
             store.set("gen_checkpoint", None)
             store.set("gen_seed", None)
+            # durable 체크포인트도 함께 버린다 (안 버리면 새로고침 후
+            # 낡은 중단 기록이 다시 뜬다). 실패해도 버튼 동작은 계속된다.
+            try:
+                if store.get("project_id"):
+                    _project_store.delete_checkpoint(
+                        store.get("project_id"))
+            except Exception:
+                pass
             st.rerun()
     if st.button("생성 시작", type="primary", disabled=not can_run):
         if not code_ok:
@@ -2629,6 +2917,22 @@ def step4():
                 import random as _random
                 _seed = _random.randint(0, 2**31 - 1)
                 store.set("gen_seed", _seed)
+            # 결함 1 (워커 A): 배치 완료 콜백은 세션뿐 아니라 durable
+            # 저장소에도 체크포인트를 남긴다. durable 저장이 실패해도
+            # 생성 자체는 멈추지 않는다 (세션 체크포인트는 유지됨).
+            # 저장 경로가 통째로 프로젝트 상태를 쓰는 save_project()가
+            # 아니라 체크포인트 전용 가벼운 경로라 배치당 1회 쓰기가
+            # 429를 유발하지 않는다.
+            def _save_checkpoint_durable(cp):
+                store.set("gen_checkpoint", cp)
+                try:
+                    _pid = store.get("project_id")
+                    if _pid:
+                        _project_store.save_checkpoint(
+                            _pid, cp, gen_seed=_seed)
+                except Exception:
+                    pass
+
             # M-2: 새 실행 시작 시 이전 실행의 체크포인트 스냅샷을 비운다.
             # gen_service는 모듈 레벨 싱글턴이라 last_checkpoint이 성공한
             # 이전 실행의 최종 스냅샷을 계속 들고 있다. 새 실행이 배치 0
@@ -2658,7 +2962,7 @@ def step4():
                     nemotron_facets=store.get("nemotron_facets"),
                     seed=_seed,
                     checkpoint=_resume_cp if _resume_ok else None,
-                    checkpoint_cb=lambda cp: store.set("gen_checkpoint", cp),
+                    checkpoint_cb=_save_checkpoint_durable,
                 )
                 store.set("results_df", df)
                 prov = get_provider(provider)
@@ -2681,6 +2985,13 @@ def step4():
                 store.set("gen_execution", gen_service.last_execution)
                 store.set("gen_checkpoint", None)
                 store.set("gen_seed", None)
+                # 생성 완료 시 durable 체크포인트도 함께 삭제한다.
+                try:
+                    if store.get("project_id"):
+                        _project_store.delete_checkpoint(
+                            store.get("project_id"))
+                except Exception:
+                    pass
                 if (gen_service.last_resume_info
                         and gen_service.last_resume_info.get("resumed_batches")):
                     _ri = gen_service.last_resume_info
@@ -2705,6 +3016,17 @@ def step4():
                 st.error(f"생성 실패: {e}")
                 if gen_service.last_checkpoint:
                     store.set("gen_checkpoint", gen_service.last_checkpoint)
+                    # 중단 시점 체크포인트를 durable 저장소에도 남긴다
+                    # (배치 콜백이 이미 저장했겠지만, 콜백이 닿지 않은
+                    # 경우의 보험 — 실패해도 화면 표시는 계속된다).
+                    try:
+                        _pid = store.get("project_id")
+                        if _pid:
+                            _project_store.save_checkpoint(
+                                _pid, gen_service.last_checkpoint,
+                                gen_seed=_seed)
+                    except Exception:
+                        pass
                     st.info("⏸️ "
                             + format_checkpoint_status(
                                 gen_service.last_checkpoint))
@@ -2966,9 +3288,21 @@ def _render_workflow_guide():
 
 
 def _render_save_status():
-    """저장 상태·마지막 저장 시각을 지속 표시 (UX 개선 ②)."""
+    """저장 상태·마지막 저장 시각을 지속 표시 (UX 개선 ②).
+
+    저장 실패·임시 저장 상태면 '저장됨'으로 보이지 않게 실패 내용을
+    먼저 보여준다 (B-2: 조용한 실패 금지).
+    """
     pid = store.get("project_id")
     if not pid:
+        return
+    if st.session_state.get("_save_degraded"):
+        msg = st.session_state.get("_save_degraded_msg") or (
+            "⚠️ Sheets 저장 실패 — 로컬에 임시 저장됨.")
+        st.caption(msg)
+        return
+    if st.session_state.get("_save_error"):
+        st.caption(f"❌ {st.session_state.get('_save_error')}")
         return
     if _is_current_state_saved():
         at = st.session_state.get("_last_saved_at") or ""
@@ -3029,19 +3363,27 @@ _render_stepper()
 _render_leave_guard()
 
 if not projects:
-    st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
-    with st.form("first_project_form", border=False):
-        first_project_name = st.text_input("프로젝트 이름")
-        first_create_submitted = st.form_submit_button("첫 프로젝트 만들기")
-    if first_create_submitted:
-        try:
-            first_pid = _project_store.create_project(first_project_name)
-        except ValueError as e:
-            st.error(str(e))
-        else:
-            _load_project_to_store(first_pid)
-            st.rerun()
-    st.stop()
+    if current_pid and _projects_list_degraded:
+        # B-2: 429로 목록이 비어 보여도 세션 프로젝트가 있으면 앱을 멈추지
+        # 않고 로컬 내용으로 계속 작업한다.
+        st.warning(
+            "Google Sheets 연결이 일시적으로 끊겨 프로젝트 목록을 불러오지 "
+            "못했습니다. 현재 프로젝트의 내용으로 계속 작업할 수 있습니다."
+        )
+    else:
+        st.info("프로젝트가 없습니다. 이름을 입력해 첫 프로젝트를 만들어 주세요.")
+        with st.form("first_project_form", border=False):
+            first_project_name = st.text_input("프로젝트 이름")
+            first_create_submitted = st.form_submit_button("첫 프로젝트 만들기")
+        if first_create_submitted:
+            try:
+                first_pid = _project_store.create_project(first_project_name)
+            except ValueError as e:
+                st.error(str(e))
+            else:
+                _load_project_to_store(first_pid)
+                st.rerun()
+        st.stop()
 
 # 상단 메뉴별 페이지 분할 (페이지 상태 방식) — 현재 페이지만 본문에 렌더링한다.
 # 5개 단계 + 모델·대표성 안내 + 프로젝트 관리 + 업데이트 기록 = 8개 페이지. 스테퍼는 상단에 유지된다.

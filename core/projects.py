@@ -180,3 +180,46 @@ class ProjectStore:
         path = self._path(project_id)
         if path.exists():
             path.unlink()
+
+    # ------------------------------------------------------------------
+    # 체크포인트 전용 경로 (결함 1, 워커 A)
+    #
+    # 배치 중간 저장/재개 체크포인트 + gen_seed를 프로젝트 전체 상태와
+    # 분리해 가볍게 저장한다. save_project()는 results_df 등 상태 전체를
+    # 통째로 다시 쓰므로 배치마다 부르면 429를 유발한다 — 체크포인트는
+    # 배치당 1회, 체크포인트 JSON만 쓴다.
+    # 파일명은 "{project_id}.checkpoint" (확장자 .json이 아님) —
+    # list_projects()가 *.json을 glob하므로 프로젝트 목록에 걸리지 않는다.
+    # ------------------------------------------------------------------
+    def _checkpoint_path(self, project_id: str) -> Path:
+        return self.dir / f"{project_id}.checkpoint"
+
+    def save_checkpoint(self, project_id: str, checkpoint: dict,
+                        gen_seed=None) -> None:
+        """체크포인트 + gen_seed 저장 (프로젝트 상태와 분리)."""
+        payload = {
+            "checkpoint": _json_safe(checkpoint),
+            "gen_seed": _json_safe(gen_seed),
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        self._checkpoint_path(project_id).write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def load_checkpoint(self, project_id: str) -> dict | None:
+        """저장된 체크포인트 payload 반환. 없거나 손상됐으면 None."""
+        path = self._checkpoint_path(project_id)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(data, dict) or "checkpoint" not in data:
+            return None
+        return data
+
+    def delete_checkpoint(self, project_id: str) -> None:
+        """체크포인트 삭제 (없으면 no-op)."""
+        path = self._checkpoint_path(project_id)
+        if path.exists():
+            path.unlink()

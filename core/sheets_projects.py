@@ -98,6 +98,32 @@ def _join_data(row: list[str], data_start_col: int) -> str:
     return "".join(cell for cell in row[data_start_col:] if cell)
 
 
+def _col_letter(n: int) -> str:
+    """1-based 열 번호 → 스프레드시트 열 문자 (1=A, 27=AA)."""
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(ord("A") + r) + s
+    return s
+
+
+CHECKPOINT_HEADER = ["id", "updated_at"]
+
+
+def _get_checkpoint_worksheet(sh):
+    """checkpoints 시트 가져오기 (없으면 생성).
+
+    구조: id | updated_at | data_1 | data_2 | ... (40000자씩 분할 저장).
+    프로젝트 전체 상태와 분리된 가벼운 쓰기 경로다.
+    """
+    try:
+        ws = sh.worksheet("checkpoints")
+    except Exception:
+        ws = sh.add_worksheet(title="checkpoints", rows=100, cols=20)
+        ws.append_row(CHECKPOINT_HEADER)
+    return ws
+
+
 class SheetsProjectStore:
     """Google Sheets 기반 프로젝트 저장소.
 
@@ -270,5 +296,82 @@ AHPMASTER와 동일한 서비스 계정을 사용합니다.
     def delete_project(self, project_id: str) -> None:
         ws = self._ensure()
         row_num = self._find_row(project_id)
+        if row_num is not None:
+            ws.delete_rows(row_num)
+
+    # ------------------------------------------------------------------
+    # 체크포인트 전용 경로 (결함 1, 워커 A)
+    #
+    # 배치 중간 저장/재개 체크포인트 + gen_seed를 "checkpoints" 시트에
+    # 프로젝트 전체 상태와 분리해 저장한다. save_project()는 상태 전체
+    # JSON을 통째로 다시 쓰므로 배치마다 부르면 429를 유발한다 —
+    # 체크포인트는 배치당 1회, 체크포인트 JSON만 쓴다.
+    # ------------------------------------------------------------------
+    def _ensure_checkpoint_ws(self):
+        self._ensure()
+        return _get_checkpoint_worksheet(self._sh)
+
+    def _find_checkpoint_row(self, ws, project_id: str) -> int | None:
+        """체크포인트 시트에서 프로젝트 ID의 행 번호 (1-based)."""
+        ids = ws.col_values(1)
+        for i, v in enumerate(ids[1:], start=2):
+            if v == project_id:
+                return i
+        return None
+
+    def save_checkpoint(self, project_id: str, checkpoint: dict,
+                        gen_seed=None) -> None:
+        ws = self._ensure_checkpoint_ws()
+        payload = {
+            "checkpoint": _json_safe(checkpoint),
+            "gen_seed": _json_safe(gen_seed),
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        data_str = json.dumps(payload, ensure_ascii=False)
+        chunks = _split_data(data_str)
+        row_num = self._find_checkpoint_row(ws, project_id)
+        now = payload["updated_at"]
+        if row_num is None:
+            ws.append_row([project_id, now] + chunks)
+            return
+        # 기존 행 업데이트: 이전 데이터 길이만큼 지우고 새 청크를 쓴다
+        # (이전 청크가 더 길었으면 꼬리가 남아 JSON이 오염되는 것을 막는다).
+        old_len = 0
+        try:
+            old_row = ws.row_values(row_num)
+            old_len = max(0, len(old_row) - 2)
+        except Exception:
+            old_len = 0
+        ws.update_cell(row_num, 2, now)
+        clear_width = max(len(chunks), old_len)
+        if clear_width > 0:
+            end_clear = _col_letter(2 + clear_width)
+            ws.update(f"C{row_num}:{end_clear}{row_num}",
+                      [[""] * clear_width], value_input_option="RAW")
+        if chunks:
+            end_col = _col_letter(2 + len(chunks))
+            ws.update(f"C{row_num}:{end_col}{row_num}",
+                      [chunks], value_input_option="RAW")
+
+    def load_checkpoint(self, project_id: str) -> dict | None:
+        ws = self._ensure_checkpoint_ws()
+        row_num = self._find_checkpoint_row(ws, project_id)
+        if row_num is None:
+            return None
+        row = ws.row_values(row_num)
+        data_str = _join_data(row, 2)
+        if not data_str.strip():
+            return None
+        try:
+            payload = json.loads(data_str)
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or "checkpoint" not in payload:
+            return None
+        return payload
+
+    def delete_checkpoint(self, project_id: str) -> None:
+        ws = self._ensure_checkpoint_ws()
+        row_num = self._find_checkpoint_row(ws, project_id)
         if row_num is not None:
             ws.delete_rows(row_num)
