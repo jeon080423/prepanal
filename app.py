@@ -1200,7 +1200,7 @@ def _report_mockup_html():
         ("1", "설문 설계", "문항·보기 인식", True),
         ("2", "응답자 구성", "분포 설정", True),
         ("3", "실측 응답 학습(선택)", "분포 반영", True),
-        ("4", "가상 응답 생성", "최대 200건 생성", True),
+        ("4", "가상 응답 생성", "최대 500건 생성", True),
         ("5", "결과·진단", "진단 리포트", False),  # 현재 화면
     ]
     step_rows = []
@@ -1265,11 +1265,11 @@ def _report_mockup_html():
         "</span></div>"
         '<div style="font-size:16px; font-weight:800; color:#17242C; margin-top:8px;">파일럿 진단 리포트</div>'
         '<div style="font-size:11.5px; color:#5A6E6B; margin-top:2px;">'
-        "가상 응답 최대 200건을 기반으로 설문 품질을 진단했습니다.</div>"
+        "가상 응답 최대 500건을 기반으로 설문 품질을 진단했습니다.</div>"
         '<div class="pp-mockup-cards" style="display:flex; gap:10px; margin-top:8px;">'
         '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
         '<div style="font-size:11px; color:#5A6E6B;">가상 응답</div>'
-        '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">최대 200건</div></div>'
+        '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">최대 500건</div></div>'
         '<div style="flex:1; background:#FFFFFF; border:1px solid #D8E6DF; border-radius:10px; padding:10px 12px;">'
         '<div style="font-size:11px; color:#5A6E6B;">진단 단계</div>'
         '<div style="font-size:19px; font-weight:800; color:#176F68; margin-top:2px; white-space:nowrap;">5단계</div></div>'
@@ -1389,7 +1389,7 @@ def _render_landing():
             '<span style="background:linear-gradient(transparent 62%, #9ADCD0 62%);">응답을 먼저</span> '
             "만나보세요.</div>"
             '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.6rem;">'
-            "10,000명의 가상 페르소나 풀에서 최대 200명이 설문에 응답합니다.</div>"
+            "10,000명의 가상 페르소나 풀에서 최대 500명이 설문에 응답합니다.</div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -1406,7 +1406,7 @@ def _render_landing():
             )
     with _hero_r:
         st.markdown(_report_mockup_html(), unsafe_allow_html=True)
-    # 수치 스트립 (검증된 내용만: 페르소나 풀 10,000명·5단계·17개 시도·CC BY 4.0 — 생성은 최대 200건)
+    # 수치 스트립 (검증된 내용만: 페르소나 풀 10,000명·5단계·17개 시도·CC BY 4.0 — 생성은 최대 500건)
     st.markdown(
         '<div class="pp-stats" style="display:flex; background:#E4F2ED; border-radius:14px; '
         'margin-top:0.8rem; padding:0.9rem 0.4rem;">'
@@ -1471,7 +1471,7 @@ def _render_landing():
                 ' <span style="font-size:1.05rem; font-weight:800; color:#17242C;">가상 응답 생성</span>',
                 unsafe_allow_html=True,
             )
-            st.caption("다양한 인구통계와 행동 특성을 가진 AI 가상 페르소나 풀(10,000명)에서 최대 200명이 설문에 응답합니다.")
+            st.caption("다양한 인구통계와 행동 특성을 가진 AI 가상 페르소나 풀(10,000명)에서 최대 500명이 설문에 응답합니다.")
             st.markdown(
                 '<div style="display:flex; justify-content:center; gap:10px; margin-top:12px;">'
                 '<div style="width:52px; height:52px; border-radius:50%; background:#E4F2ED; '
@@ -1498,7 +1498,7 @@ def _render_landing():
                 "</div>"
                 '<div style="text-align:center; margin-top:10px;">'
                 '<span style="font-size:11px; font-weight:700; color:#176F68; background:#E4F2ED; '
-                'border-radius:999px; padding:3px 10px;">가상 응답 최대 200건 ✓</span></div>',
+                'border-radius:999px; padding:3px 10px;">가상 응답 최대 500건 ✓</span></div>',
                 unsafe_allow_html=True,
             )
     with _f3:
@@ -2190,7 +2190,7 @@ def _render_nemotron_quota_ui() -> bool:
                            key="count_age")
         sex = c2.selectbox("성별", ["여성", "남성"], key="count_sex")
         region_key = c3.selectbox("지역", region_cats, key="count_region")
-        n_cell = c4.number_input("건수", min_value=1, max_value=200, value=10,
+        n_cell = c4.number_input("건수", min_value=1, max_value=500, value=10,
                                  step=1, key="count_n")
         if st.button("셀 추가", key="count_add"):
             counts[f"{age}|{sex}|{region_key}"] = int(n_cell)

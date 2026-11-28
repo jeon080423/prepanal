@@ -35,7 +35,7 @@ MULTI_SEP = ";"            # 다중선택 응답 구분자
 
 DEFAULT_BATCH_SIZE = 5     # LLM 배치 호출 단위 (응답자 수)
 
-MAX_RESPONDENTS = 200      # 1회 생성 상한
+MAX_RESPONDENTS = 500      # 1회 생성 상한
 
 TRANSCRIPT_EXCERPT_CHARS = 2500  # 고정밀 모드에서 쓰는 인터뷰 발췌 길이
 
