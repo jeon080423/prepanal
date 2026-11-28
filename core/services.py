@@ -709,6 +709,101 @@ class GenerationService:
         return meta
 
 # ----------------------------------------------------------------------------
+# 합성 표기 표준화 (Phase 2)
+# ----------------------------------------------------------------------------
+# 다운로드 산출물(xlsx/docx)과 수정 설문지 초안은 합성 응답 기반 사전 테스트
+# 결과임을 표지에 명시한다. 표기는 추가만 하고 기존 시트·컬럼·표 구조는
+# 그대로 둔다.
+_SYNTHETIC_LABEL = "[합성 응답 · Pre-test]"
+
+_SYNTHETIC_NOTE = (
+    "본 산출물은 합성 응답(가상 응답) 기반 사전 테스트(Pre-test) 결과입니다. "
+    "실제 조사 전 실측으로 확정해야 합니다."
+)
+
+
+def _normalize_finding_text(value) -> str:
+    """finding/문항 텍스트 비교용 정규화: NFKC + 공백 정리."""
+    return re.sub(r"\s+", " ",
+                  unicodedata.normalize("NFKC", str(value or ""))).strip()
+
+
+def _finding_matches_question(finding: dict, question: dict) -> bool:
+    """진단 finding이 해당 문항에 대한 것인지 느슨하게 매칭한다.
+
+    diagnose()는 '문항' 값으로 문항 텍스트(qtext)를 넣지만, 다른 호출부는
+    문항 ID(Q12 등)를 넣을 수 있다. 그래서 ID가 일치하면 ID로, 아니면
+    텍스트 포함 여부로 매칭한다. "(전체)"·"(패널 구성)" 같은 문항 무관
+    finding은 어떤 문항과도 매칭하지 않는다 (요약에만 들어간다).
+    """
+    if not isinstance(finding, dict) or not isinstance(question, dict):
+        return False
+    f_q = _normalize_finding_text(finding.get("문항", ""))
+    if not f_q:
+        return False
+    qid = _normalize_finding_text(question.get("id", ""))
+    qtext = _normalize_finding_text(question.get("text", ""))
+    if qid:
+        # ID 정확 일치 또는 "Q12. ..."처럼 ID로 시작하는 표기
+        if f_q == qid:
+            return True
+        if re.match(rf"{re.escape(qid)}(?![0-9])", f_q):
+            return True
+    if qtext and f_q:
+        # 텍스트 정확 일치 또는 한쪽이 다른 쪽을 포함 (짧은 문자열의
+        # 우연한 부분일치는 제외 — 8자 이상일 때만 포함 매칭).
+        if f_q == qtext:
+            return True
+        if len(f_q) >= 8 and (f_q in qtext or qtext in f_q):
+            return True
+    return False
+
+
+def _findings_for_question(question: dict,
+                           findings: list[dict]) -> list[dict]:
+    """한 문항에 매칭되는 findings만 골라낸다 (원본 순서 유지)."""
+    return [f for f in (findings or [])
+            if _finding_matches_question(f, question)]
+
+
+def _improvement_rows(findings: list[dict]) -> list[dict]:
+    """'개선 제안' 섹션용으로 findings를 정규화한다 (.get() 안전 접근)."""
+    rows = []
+    for f in (findings or []):
+        if not isinstance(f, dict):
+            continue
+        rows.append({
+            "문항": str(f.get("문항", "") or ""),
+            "문제": str(f.get("문제", "") or ""),
+            "근거": str(f.get("근거", "") or ""),
+            "해결책": str(f.get("해결책", "") or ""),
+            "심각도": str(f.get("심각도", "") or ""),
+        })
+    return rows
+
+
+def _question_type_label(qtype: str) -> str:
+    """문항 유형 코드를 표시용 라벨로 바꾼다 (미등록 유형은 코드 그대로)."""
+    try:
+        return get_question_type(qtype).label
+    except Exception:
+        return str(qtype or "")
+
+
+def _setup_docx_document():
+    """보고서용 DOCX 문서 뼈대 (맑은 고딕 기본 폰트 — to_word_bytes와 동일)."""
+    from docx import Document
+    from docx.shared import Pt
+    from docx.oxml.ns import qn
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "맑은 고딕"
+    style.font.size = Pt(10)
+    style.element.rPr.rFonts.set(qn("w:eastAsia"), "맑은 고딕")
+    return doc
+
+
+# ----------------------------------------------------------------------------
 # 엑셀 출력
 # ----------------------------------------------------------------------------
 class ExportService:
@@ -719,6 +814,20 @@ class ExportService:
         from core.diagnostics import findings_to_dataframe
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            # 표지 (첫 시트) — 합성 표기 + 근거(문항/응답 ID 연결).
+            # 기존 데이터 시트·컬럼은 건드리지 않고 표지 시트만 앞에 추가한다.
+            qids = [str(c) for c in df.columns
+                    if not str(c).startswith("프로필_")]
+            cover_rows = [
+                [_SYNTHETIC_LABEL],
+                [_SYNTHETIC_NOTE],
+                [""],
+                ["근거 — 문항 ID", ", ".join(qids) if qids else "-"],
+                ["근거 — 응답 건수", str(len(df))],
+            ]
+            pd.DataFrame(cover_rows).to_excel(
+                writer, index=False, header=False, sheet_name="표지"
+            )
             df.to_excel(writer, index=False, sheet_name=sheet_name)
             info_rows = [["항목", "내용"]]
             for line in METHODOLOGY_NOTE.strip().split("\n"):
@@ -734,6 +843,11 @@ class ExportService:
             findings_to_dataframe(diagnostics or []).to_excel(
                 writer, index=False, sheet_name="진단_리포트"
             )
+            # 개선 제안 섹션 — findings가 있을 때만 별도 시트로 추가한다.
+            if diagnostics:
+                findings_to_dataframe(diagnostics).to_excel(
+                    writer, index=False, sheet_name="개선_제안"
+                )
         return buf.getvalue()
 
     @staticmethod
@@ -770,6 +884,29 @@ class ExportService:
         run = p.add_run(f"생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         run.font.size = Pt(9)
         run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        # 합성 표기 (Phase 2) — 표지 상단. 근거(문항/응답 ID)도 함께 표시한다.
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(_SYNTHETIC_LABEL)
+        run.bold = True
+        run.font.size = Pt(11)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(_SYNTHETIC_NOTE)
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        if df is not None and not df.empty:
+            qids = [str(c) for c in df.columns
+                    if not str(c).startswith("프로필_")]
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(
+                f"근거 — 문항 {len(qids)}개"
+                + (f" ({', '.join(qids)})" if qids else "")
+                + f", 응답 {len(df)}건")
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
         doc.add_paragraph()  # 여백
 
         # 메타 정보
@@ -836,6 +973,33 @@ class ExportService:
                 row.cells[4].width = Cm(2)
         doc.add_paragraph()
 
+        # 개선 제안 (Phase 2) — findings가 있을 때만 별도 섹션으로 붙인다.
+        # 각 항목은 문항 ID, 문제, 근거, 해결책을 포함한다.
+        if findings:
+            doc.add_heading("개선 제안", level=1)
+            table = doc.add_table(rows=1, cols=4)
+            table.style = "Light Grid Accent 1"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            headers = ["문항", "문제", "근거", "해결책"]
+            for i, h in enumerate(headers):
+                cell = table.rows[0].cells[i]
+                cell.text = h
+                for par in cell.paragraphs:
+                    for r in par.runs:
+                        r.bold = True
+            for f in findings:
+                row = table.add_row().cells
+                row[0].text = str(f.get("문항", ""))
+                row[1].text = str(f.get("문제", ""))
+                row[2].text = str(f.get("근거", ""))
+                row[3].text = str(f.get("해결책", ""))
+            for row in table.rows:
+                row.cells[0].width = Cm(3)
+                row.cells[1].width = Cm(4)
+                row.cells[2].width = Cm(5)
+                row.cells[3].width = Cm(5)
+            doc.add_paragraph()
+
         # 응답 요약 통계
         if df is not None and not df.empty and questions:
             doc.add_heading("문항별 응답 요약", level=1)
@@ -874,6 +1038,145 @@ class ExportService:
         for line in METHODOLOGY_NOTE.strip().split("\n"):
             if line.strip():
                 doc.add_paragraph(line.strip(), style="List Bullet")
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+
+    def to_improved_questionnaire_docx(self, questions: list[dict],
+                                       findings: list[dict]) -> bytes:
+        """진단 findings를 반영한 수정 설문지 초안 DOCX를 바이트로 반환.
+
+        questions: 문항 dict 목록 (id, text, type, options, branching).
+        findings: diagnose() 결과 dict 목록 (키: 문항, 문제, 근거, 해결책, 심각도).
+
+        구성: ① 제목 + 합성 표기 ② 개선 제안 요약 ③ 수정 설문지 초안
+        (원본 문항 그대로 + 해당 finding의 해결책을 '개선 제안:' 주석으로
+        부착) ④ '실측으로 확정' 안내. LLM을 호출하지 않고 findings의
+        해결책 텍스트를 그대로 활용하는 결정적 생성이다. findings가
+        비어 있으면 문항 목록만 담은 DOCX를 반환한다.
+        """
+        from docx.shared import Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_TABLE_ALIGNMENT
+        from docx.oxml.ns import qn
+        from datetime import datetime
+
+        questions = list(questions or [])
+        rows = _improvement_rows(findings)
+
+        doc = _setup_docx_document()
+
+        # ① 제목 + 합성 표기
+        title = doc.add_heading("수정 설문지 초안", level=0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(_SYNTHETIC_LABEL)
+        run.bold = True
+        run.font.size = Pt(11)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(f"생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(_SYNTHETIC_NOTE)
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        doc.add_paragraph()  # 여백
+
+        # ② 개선 제안 요약 — findings가 있을 때만.
+        if rows:
+            doc.add_heading("개선 제안 요약", level=1)
+            high = sum(1 for f in rows if f.get("심각도") == "높음")
+            p = doc.add_paragraph()
+            p.add_run(f"총 {len(rows)}건 (높음 {high}건, "
+                      f"기타 {len(rows) - high}건)")
+            table = doc.add_table(rows=1, cols=4)
+            table.style = "Light Grid Accent 1"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            headers = ["문항", "문제", "해결책", "심각도"]
+            for i, h in enumerate(headers):
+                cell = table.rows[0].cells[i]
+                cell.text = h
+                for par in cell.paragraphs:
+                    for r in par.runs:
+                        r.bold = True
+            for f in rows:
+                row = table.add_row().cells
+                row[0].text = f.get("문항", "")
+                row[1].text = f.get("문제", "")
+                row[2].text = f.get("해결책", "")
+                sev = f.get("심각도", "")
+                row[3].text = sev
+                for par in row[3].paragraphs:
+                    for r in par.runs:
+                        r.bold = True
+                        if sev == "높음":
+                            r.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+                        else:
+                            r.font.color.rgb = RGBColor(0xCC, 0x7A, 0x00)
+            doc.add_paragraph()
+
+        # ③ 수정 설문지 초안 — 원본 문항을 그대로 싣고, 해당 finding이
+        # 있는 문항 아래에 해결책을 '개선 제안:' 주석으로 붙인다.
+        # 매칭이 안 된 finding은 요약(②)에만 있고 주석은 생략한다.
+        doc.add_heading("수정 설문지 초안", level=1)
+        if not questions:
+            doc.add_paragraph("문항이 없습니다.")
+        for q in questions:
+            if not isinstance(q, dict):
+                continue
+            qid = str(q.get("id", "") or "")
+            qtext = str(q.get("text", "") or "")
+            heading_text = f"{qid}. {qtext}" if qid else qtext
+            doc.add_heading(heading_text or "(문항 없음)", level=2)
+            qtype = str(q.get("type", "") or "")
+            label = _question_type_label(qtype)
+            p = doc.add_paragraph()
+            run = p.add_run(f"유형: {label}" if label else f"유형: {qtype}")
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+            options = q.get("options")
+            if isinstance(options, list) and options:
+                for opt in options:
+                    doc.add_paragraph(str(opt), style="List Bullet")
+            branching = str(q.get("branching", "") or "").strip()
+            if branching:
+                p = doc.add_paragraph()
+                run = p.add_run(f"분기: {branching}")
+                run.font.size = Pt(9)
+                run.font.italic = True
+            for f in _findings_for_question(q, rows):
+                solution = f.get("해결책", "")
+                problem = f.get("문제", "")
+                note = f"개선 제안: {solution}" if solution else ""
+                if problem and solution:
+                    note = f"개선 제안 ({problem}): {solution}"
+                if note:
+                    p = doc.add_paragraph()
+                    run = p.add_run(note)
+                    run.bold = True
+                    run.font.color.rgb = RGBColor(0x1B, 0x7A, 0x34)
+            doc.add_paragraph()
+
+        # ④ 실측으로 확정 안내
+        doc.add_heading("실측으로 확정", level=1)
+        doc.add_paragraph(
+            "이 초안은 합성 응답(가상 응답) 기반 사전 테스트(Pre-test) 결과를 "
+            "바탕으로 만든 것입니다. 합성 응답은 실제 응답자를 대신할 수 "
+            "없으므로, 실제 조사 전에 반드시 실측 파일럿으로 문항을 확정하세요.",
+            style="List Bullet")
+        doc.add_paragraph(
+            "개선 제안은 진단 규칙이 실제 합성 응답 데이터에서 계산한 통계에만 "
+            "근거합니다. 제안대로 고친 문항도 실측에서 다시 검증해야 합니다.",
+            style="List Bullet")
+        doc.add_paragraph(
+            "이 문서를 실제 조사용 설문지로 쓰기 전에는 문항 순서·분기 조건·"
+            "보기 문구를 실측 응답으로 최종 확인하세요.",
+            style="List Bullet")
+
         buf = io.BytesIO()
         doc.save(buf)
         return buf.getvalue()

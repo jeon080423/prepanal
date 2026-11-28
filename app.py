@@ -1,6 +1,6 @@
 """프리서베이 스튜디오 (AI 합성응답자 기반 사전테스트)
 
-설문 설계 → 페르소나 설계 → 분포 학습 → 가상 응답 생성 → 결과
+설문 설계 → 응답자 구성 → 실측 응답 학습(선택) → 가상 응답 생성 → 결과·진단
 5단계 마법사형 Streamlit 앱.
 
 아키텍처: 이 파일은 렌더링만 담당한다. 비즈니스 로직은 core/ 패키지의
@@ -44,6 +44,76 @@ def _now_kst() -> datetime:
 def _fmt_kst_now() -> str:
     """현재 시각을 KST 'YYYY-MM-DD HH:MM' 문자열로 반환."""
     return _now_kst().strftime("%Y-%m-%d %H:%M")
+
+
+# 합성 표기 표준화 (Phase 2 워커 A): 모든 결과 화면에 공통으로 붙는 표기.
+SYNTH_LABEL = "[합성 응답 · Pre-test]"
+
+
+def _fmt_saved_at_display(raw: str, is_kst: bool) -> str:
+    """저장 시각 표시용 문자열을 KST 'YYYY-MM-DD HH:MM'으로 반환한다 (B-2 표시만).
+
+    is_kst=True면 앱이 KST로 직접 찍은 값이라 그대로 둔다 (이중 변환 금지).
+    is_kst=False면 시트 updated_at이다. core 저장소가 서버 시각(UTC, naive
+    '%Y-%m-%d %H:%M')으로 기록하므로 표시할 때만 +9시간을 더한다.
+    형식을 알 수 없으면 원문을 그대로 돌려줘 표시가 깨지지 않게 한다.
+    core/sheets_projects.py·core/projects.py는 건드리지 않는다.
+    """
+    if not raw:
+        return ""
+    if is_kst:
+        return raw
+    text = str(raw).strip()
+    parsed = None
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M",
+                "%Y-%m-%dT%H:%M:%S"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(KST).strftime("%Y-%m-%d %H:%M")
+
+
+def _format_duration_secs(seconds: float) -> str:
+    """초 단위 소요 시간을 'N초' 또는 'M분'으로 짧게 표기한다."""
+    if seconds < 90:
+        return f"{seconds:.0f}초"
+    return f"{seconds / 60:.1f}분"
+
+
+def _estimate_generation_time(n: int, use_precision: bool,
+                              provider_label: str) -> tuple[str, str]:
+    """4단계 생성 예상 소요 시간(범위)과 근거 문구를 반환한다. 시간만 표시한다.
+
+    실측 계수가 없어 단위 시간은 대략적인 가정이다. 일반 모드 응답자 1명당
+    약 1~3초, 고정밀(인터뷰 기반) 모드 약 3~8초로 두고, 응답자 수를 곱해
+    범위로만 표시한다. 제공자는 수치 계수에 반영하지 않고 문구에 밝혀
+    속도가 달라질 수 있음을 알린다.
+    """
+    if use_precision:
+        low, high = 3.0, 8.0
+        mode_label = "고정밀 모드"
+    else:
+        low, high = 1.0, 3.0
+        mode_label = "일반 모드"
+    low_s = max(1.0, n * low)
+    high_s = max(low_s, n * high)
+    label = f"약 {_format_duration_secs(low_s)}~{_format_duration_secs(high_s)}"
+    tip = (
+        f"예상 기준: 응답자 {n}명 × {mode_label} 단위 시간 "
+        f"약 {low:.0f}~{high:.0f}초/명. 제공자({provider_label})·문항 수·"
+        "네트워크 상태에 따라 달라질 수 있으며, 실측 계수가 없어 "
+        "범위로만 표시합니다."
+    )
+    return label, tip
 
 
 def _escape_markdown_label(text: str) -> str:
@@ -118,7 +188,7 @@ from core import (QUESTION_TYPE_REGISTRY, PROVIDER_REGISTRY, ExportService, Gene
                   ProjectStore, PROJECT_STATE_KEYS, SheetsProjectStore,
                   load_nemotron_extract, nemotron_default_quotas)
 
-STEPS = ["설문 설계", "페르소나 설계", "분포 학습", "가상 응답 생성", "결과"]
+STEPS = ["설문 설계", "응답자 구성", "실측 응답 학습(선택)", "가상 응답 생성", "결과·진단"]
 
 # ----------------------------------------------------------------------------
 # 서비스 · 저장소 (UI는 이 진입점만 쓴다)
@@ -296,7 +366,7 @@ def _is_current_state_saved() -> bool:
 
 
 def _persona_configured() -> bool:
-    """페르소나 설계가 유효한 분포로 채워져 있는지 반환 (B-3 완료 판정용).
+    """응답자 구성(2단계)이 유효한 분포로 채워져 있는지 반환 (B-3 완료 판정용).
 
     Nemotron: 쿼터가 있고, 비율 모드면 차원별 합계가 100%, 건수 모드면
     셀 1개 이상. 직접 설정: 모든 차원의 합계가 100%. 쿼터는 2단계
@@ -329,10 +399,10 @@ def _persona_configured() -> bool:
 def _step_completion() -> dict[int, bool]:
     """단계별 실제 완료 여부 (B-3). 위치(step)가 아니라 산출물 기준으로 판정한다.
 
-    1 설문 설계: 문항 1개 이상. 2 페르소나 설계: 유효한 분포
-    (_persona_configured). 3 분포 학습: 학습된 분포 존재(선택 단계라
-    비워 두면 미완료로 남는다). 4 가상 응답 생성·5 결과: 생성된 결과 존재.
-    스테퍼·주 메뉴·작업 순서 가이드가 이 하나를 공용으로 써서 표기가
+    1 설문 설계: 문항 1개 이상. 2 응답자 구성: 유효한 분포
+    (_persona_configured). 3 실측 응답 학습(선택): 학습된 분포 존재(선택 단계라
+    비워 두면 미완료로 남는다). 4 가상 응답 생성·5 결과·진단: 생성된 결과 존재.
+    스테퍼·작업 순서 가이드가 이 하나를 공용으로 써서 표기가
     어긋나지 않는다.
     """
     has_results = store.get("results_df") is not None
@@ -348,7 +418,7 @@ def _step_completion() -> dict[int, bool]:
 # 이론적 배경 (팝업 다이얼로그)
 # ----------------------------------------------------------------------------
 def _render_theory_content():
-    """모델 상세 설명 + 대표성 — 이론적 배경 본문 (다이얼로그·제품 페이지 공용)."""
+    """모델 상세 설명 + 대표성 — 이론적 배경 본문 (다이얼로그·모델·대표성 안내 페이지 공용)."""
     st.caption("합성응답자(Synthetic Respondents) 방법론의 이론적 기초")
 
     st.subheader("1. 합성응답자란?")
@@ -520,9 +590,9 @@ def theory_dialog():
     _render_theory_content()
 
 def _render_product_page():
-    """제품 상세 페이지 — 모델 상세 설명 + 대표성.
+    """모델·대표성 안내 페이지 — 모델 상세 설명 + 대표성.
 
-    랜딩 네비 '제품'과 앱 주 메뉴에서 들어온다. 로그인 여부와 무관하게 보인다.
+    랜딩 네비 '모델·대표성 안내'와 앱 주 메뉴에서 들어온다. 로그인 여부와 무관하게 보인다.
     """
     # 상단: 뒤로 + 앱으로/로그인 — 양쪽 버튼을 같은 너비·같은 높이로 맞춤
     c_back, c_spacer, c_go = st.columns([1, 4, 1], vertical_alignment="center")
@@ -544,7 +614,7 @@ def _render_product_page():
     st.markdown(
         '<div style="padding: 0.4rem 0 0.2rem 0;">'
         '<div style="font-size:2rem; font-weight:800; line-height:1.3; letter-spacing:-0.02em; color:#17242C;">'
-        "PrePanel 제품</div>"
+        "PrePanel 모델·대표성 안내</div>"
         '<div style="font-size:1.02rem; line-height:1.65; color:#5A6E6B; margin-top:0.6rem;">'
         "모델과 대표성 — 합성응답자가 어떻게 만들어지고, 얼마나 모집단을 닮았는지</div>"
         "</div>",
@@ -987,7 +1057,9 @@ def _load_project_to_store(pid: str):
             _project_store.get_meta(pid).get("updated_at", "")
         )
         # 시트에 찍힌 updated_at은 core 저장소가 서버 시각(UTC)으로 기록한
-        # 값이라 KST 표기를 붙이지 않는다. 다음 저장부터 KST로 기록된다 (B-2).
+        # 값이다. 표시할 때 _render_save_status()가 _fmt_saved_at_display()로
+        # +9시간(KST) 변환하므로 여기서는 원문 그대로 두고 KST 플래그를
+        # False로 둔다 (B-2 표시만 수정, 이중 변환 금지).
         st.session_state["_last_saved_at_kst"] = False
     except Exception:
         st.session_state["_last_saved_at"] = ""
@@ -1126,10 +1198,10 @@ def _report_mockup_html():
     """
     steps = [
         ("1", "설문 설계", "문항·보기 인식", True),
-        ("2", "페르소나 설계", "분포 설정", True),
-        ("3", "분포 학습", "분포 반영", True),
+        ("2", "응답자 구성", "분포 설정", True),
+        ("3", "실측 응답 학습(선택)", "분포 반영", True),
         ("4", "가상 응답 생성", "최대 200건 생성", True),
-        ("5", "결과", "진단 리포트", False),  # 현재 화면
+        ("5", "결과·진단", "진단 리포트", False),  # 현재 화면
     ]
     step_rows = []
     for num, name, sub, done in steps:
@@ -1275,7 +1347,7 @@ def _render_landing():
     )
     # 상단 네비: 로고 + 메뉴 + 로그인만 ('무료로 시작하기' 버튼 삭제)
     # 네비 4개 항목을 하나의 HTML 블록으로 통일해 줄·폰트를 맞춤.
-    # '제품'은 쿼리파라미터 링크(?page=product)로 상세 페이지로 이동,
+    # '모델·대표성 안내'는 쿼리파라미터 링크(?page=product)로 상세 페이지로 이동,
     # 기능·요금제·문의는 섹션 앵커.
     nav_logo, nav_login = st.columns([6, 1], vertical_alignment="center")
     with nav_logo:
@@ -1284,7 +1356,7 @@ def _render_landing():
             '<span style="font-size:22px; font-weight:800; color:#176F68; letter-spacing:-0.02em;">MetriX</span>'
             '<span style="font-size:18px; font-weight:800; color:#176F68;">PrePanel</span>'
             '<span style="font-size:14px;">'
-            '<a href="?page=product" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">제품</a>'
+            '<a href="?page=product" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">모델·대표성 안내</a>'
             '<a href="#pp-how" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">기능</a>'
             '<a href="#pp-pricing" style="color:#5A6E6B; text-decoration:none; margin-right:18px;">요금제</a>'
             '<a href="#pp-contact" style="color:#5A6E6B; text-decoration:none;">문의</a>'
@@ -1695,12 +1767,36 @@ def ai_settings_dialog():
 
 
 def _render_header():
-    """상단 헤더 (Qualtrics 카피) — 로고 + 주 메뉴 팝오버 + 저장 + 도움말 + 내 계정.
+    """상단 헤더 (Qualtrics 카피) — 로고 + 더보기 팝오버 + 저장 + 도움말 + 내 계정.
 
-    주 메뉴: 5개 단계(스테퍼와 같은 goto 이동) + 제품 소개 + 프로젝트 관리·업데이트 기록 (총 8개)
-    (별도 페이지로 이동). 내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
+    더보기 메뉴는 3개만 둔다: 모델·대표성 안내 + 프로젝트 관리·업데이트 기록
+    (별도 페이지로 이동). 단계 이동은 스테퍼가 유일한 수단이다 (A안).
+    내 계정: AI 설정 다이얼로그 + 로그아웃 + 액세스 코드 확인 표시.
     알림 종·전환기는 해당 기능이 없어 넣지 않는다.
     """
+    # 모바일(≤768px) 헤더 2줄 (A안): 로고 줄 + 버튼 줄. _render_header()는
+    # 앱에서만 실행되므로 랜딩 전용 CSS와 겹치지 않는다. :has()로 헤더
+    # 블록만 골라 적용한다 (실행 환경에서 확인 필요 — VERIFICATION.md 참조).
+    st.markdown(
+        """
+        <style>
+        @media (max-width: 768px) {
+          div[data-testid="stHorizontalBlock"]:has([class*="st-key-main_menu_"]) {
+            flex-wrap: wrap !important;
+            gap: 0.25rem !important;
+          }
+          div[data-testid="stHorizontalBlock"]:has([class*="st-key-main_menu_"]) > [data-testid="stColumn"] {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+          }
+          div[data-testid="stHorizontalBlock"]:has([class*="st-key-main_menu_"]) > [data-testid="stColumn"]:first-child {
+            flex: 1 1 100% !important;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     c_logo, c_menu, c_home, c_save, c_help, c_account = st.columns(
         [4.6, 1.0, 0.9, 0.7, 0.4, 1.3], vertical_alignment="center"
     )
@@ -1738,28 +1834,16 @@ def _render_header():
         # (requirements.txt의 streamlit은 버전 고정이 없어 최신 버전이
         # 설치되므로 popover의 key 인자를 쓸 수 있다.)
         with st.popover(
-            "☰ 주 메뉴",
+            "⋯ 더보기",
             key=f"main_menu_{store.get('page')}_{store.get('step')}",
             use_container_width=True,
         ):
-            current_step = store.get("step")
-            _menu_done = _step_completion()
-            for step_number, step_name in enumerate(STEPS, start=1):
-                # 완료 표기는 위치가 아니라 실제 완료 기준 (B-3).
-                mark = "✓ " if _menu_done.get(step_number) and step_number != current_step else ""
-                if st.button(
-                    f"{mark}{step_number}. {step_name}",
-                    key=f"mainmenu_step_{step_number}",
-                    use_container_width=True,
-                    type="primary" if step_number == current_step else "secondary",
-                ):
-                    goto(step_number)
-            st.divider()
-            if st.button("📦 제품 소개 (모델·대표성)", key="btn_mainmenu_product", use_container_width=True):
+            # 단계 이동 항목은 두지 않는다 — 단계 이동은 스테퍼가 유일한 수단이다 (A안).
+            if st.button("모델·대표성 안내", key="btn_mainmenu_product", use_container_width=True):
                 st.session_state["show_product"] = True
                 st.query_params["page"] = "product"
                 st.rerun()
-            if st.button("📁 프로젝트 관리", key="btn_mainmenu_project_mgmt", use_container_width=True):
+            if st.button("프로젝트 관리", key="btn_mainmenu_project_mgmt", use_container_width=True):
                 goto_page("projects")
             if st.button("업데이트 기록", key="btn_mainmenu_update_log", use_container_width=True):
                 goto_page("updates")
@@ -1794,6 +1878,38 @@ def _render_stepper():
     완료 여부는 현재 단계보다 앞에 있느냐가 아니라 _step_completion()의
     실제 완료 기준이다 (B-3). 현재 단계는 완료됐어도 '현재'로 표시한다.
     """
+    # 모바일(≤768px) 스테퍼: 가로 스크롤·압축 + 상단 고정 (A안). :has()로
+    # 스테퍼 블록만 골라 적용하므로 다른 가로 컬럼에는 영향을 주지 않는다.
+    # sticky는 Streamlit 메인 스크롤 구조에 따라 동작하지 않을 수 있어
+    # 실행 환경에서 확인이 필요하다 (VERIFICATION.md 참조).
+    st.markdown(
+        """
+        <style>
+        @media (max-width: 768px) {
+          div[data-testid="stHorizontalBlock"]:has([class*="st-key-stepper_"]) {
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 100 !important;
+            background: #F8F9F6 !important;
+            padding-bottom: 0.35rem !important;
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+          }
+          div[data-testid="stHorizontalBlock"]:has([class*="st-key-stepper_"]) > [data-testid="stColumn"] {
+            flex: 0 0 auto !important;
+            min-width: max-content !important;
+          }
+          [class*="st-key-stepper_"] button {
+            white-space: nowrap !important;
+          }
+          [class*="st-key-stepper_"] button p {
+            font-size: 13px !important;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     current_step = store.get("step")
     done = _step_completion()
     cols = st.columns(5)
@@ -1989,7 +2105,7 @@ def step1():
 
     st.divider()
     st.button(
-        "다음: 페르소나 설계 →",
+        "다음: 응답자 구성 →",
         type="primary",
         disabled=not questions,
         on_click=lambda: goto(2),
@@ -1999,7 +2115,7 @@ def step1():
 
 
 # ----------------------------------------------------------------------------
-# Step 2: 페르소나 설계 — Nemotron 쿼터 UI
+# Step 2: 응답자 구성 — Nemotron 쿼터 UI
 # ----------------------------------------------------------------------------
 _NEMOTRON_QUOTA_DIMS = {
     "연령대": [label for label, _, _ in AGE_BANDS],
@@ -2153,7 +2269,7 @@ def _render_nemotron_quota_ui() -> bool:
 
 
 # ----------------------------------------------------------------------------
-# Step 2: 페르소나 설계
+# Step 2: 응답자 구성
 # ----------------------------------------------------------------------------
 def step2():
 
@@ -2278,11 +2394,11 @@ def step2():
     with c1:
         st.button("← 이전: 설문 설계", on_click=lambda: goto(1))
     with c2:
-        st.button("다음: 분포 학습 →", type="primary", disabled=not valid, on_click=lambda: goto(3))
+        st.button("다음: 실측 응답 학습(선택) →", type="primary", disabled=not valid, on_click=lambda: goto(3))
 
 
 # ----------------------------------------------------------------------------
-# Step 3: 분포 학습
+# Step 3: 실측 응답 학습(선택)
 # ----------------------------------------------------------------------------
 def step3():
 
@@ -2344,7 +2460,7 @@ def step3():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        st.button("← 이전: 페르소나 설계", on_click=lambda: goto(2))
+        st.button("← 이전: 응답자 구성", on_click=lambda: goto(2))
     with c2:
         st.button("다음: 가상 응답 생성 →", type="primary", on_click=lambda: goto(4))
 
@@ -2439,6 +2555,12 @@ def step4():
 
     can_run = ok and len(store.get("questions")) > 0
     code_ok = is_code_verified()
+    # 예상 소요 시간 (시간만 표시한다 — Phase 2 워커 A).
+    _est_label, _est_tip = _estimate_generation_time(
+        int(n), bool(store.get("use_precision")), get_provider(provider).label
+    )
+    st.info(f"예상 소요 시간 {_est_label}")
+    st.caption(_est_tip)
     if st.button("생성 시작", type="primary", disabled=not can_run):
         if not code_ok:
             st.error("🔒 액세스 코드를 입력해야 생성을 시작할 수 있습니다. (좌측 사이드바에서 입력)")
@@ -2496,7 +2618,7 @@ def step4():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        st.button("← 이전: 분포 학습", on_click=lambda: goto(3))
+        st.button("← 이전: 실측 응답 학습(선택)", on_click=lambda: goto(3))
     with c2:
         st.button(
             "다음: 결과 확인 →",
@@ -2507,13 +2629,61 @@ def step4():
 
 
 # ----------------------------------------------------------------------------
-# Step 5: 결과
+# Step 5: 결과·진단
 # ----------------------------------------------------------------------------
+def _render_results_kpi(df, findings, questions) -> None:
+    """5단계 최상단 핵심 지표 카드 행 (Phase 2 워커 A).
+
+    이미 화면에 있는 데이터(df·findings·questions)에서만 계산한다.
+    새 데이터 소스를 만들지 않는다.
+    """
+    from core.diagnostics import _is_missing_answer as _diag_is_missing
+
+    n_total = len(df)
+    n_warnings = len(findings or [])
+    open_qs = [q for q in (questions or [])
+               if q.get("type") in ("open", "text") and q.get("id") in df.columns]
+    lengths: list[int] = []
+    for q in open_qs:
+        series = df[q["id"]].astype(str)
+        answered = series[~series.map(_diag_is_missing)]
+        lengths.extend(len(v) for v in answered)
+    avg_len = (sum(lengths) / len(lengths)) if lengths else None
+    # R-1 수정 (코디네이터, 리뷰 지적 반영): 유효 응답률 분모를 문항 컬럼으로 한정.
+    # df에는 프로필_성별 등 프로필 컬럼이 들어 있어 df.size를 쓰면 프로필 셀까지
+    # 유효율에 들어가 diagnose()(문항 컬럼만 순회)와 정의가 어긋난다.
+    # questions의 id가 df.columns에 있는 문항 컬럼만 세어 문항 기준 유효율로 맞춘다.
+    qcols = [q.get("id") for q in (questions or [])
+             if q.get("id") in df.columns]
+    total_cells = int(len(df) * len(qcols)) if qcols else 0
+    missing_cells = 0
+    for col in qcols:
+        missing_cells += int(df[col].astype(str).map(_diag_is_missing).sum())
+    valid_rate = ((total_cells - missing_cells) / total_cells * 100.0) if total_cells else None
+
+    st.caption(SYNTH_LABEL + " 아래 지표는 합성 응답 데이터에서 계산한 값입니다.")
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.metric("총 응답 수", f"{n_total}건")
+    with k2:
+        st.metric("진단 경고 건수", f"{n_warnings}건")
+    with k3:
+        st.metric("평균 응답 길이", f"{avg_len:.1f}자" if avg_len is not None else "—")
+    with k4:
+        st.metric("유효 응답률", f"{valid_rate:.1f}%" if valid_rate is not None else "—")
+    st.caption(
+        "평균 응답 길이: 주관식 응답의 평균 문자 수(무응답 제외). "
+        "유효 응답률: 문항 응답 셀 중 무응답이 아닌 셀의 비율(프로필 컬럼 제외). "
+        "진단 경고 건수: 파일럿 진단 리포트가 보고한 finding 수(심각도 참고 포함)."
+    )
+
+
 def step5():
 
 
     # 정직한 한계 고지 — 결과 탭 상단 고정 표시
     st.warning(DISCLAIMER)
+    st.caption(SYNTH_LABEL + " 이 화면의 모든 결과는 합성응답자 기반 사전테스트 결과입니다. 실제 응답이 아닙니다.")
 
     df = store.get("results_df")
     if df is None:
@@ -2522,7 +2692,24 @@ def step5():
             pass
         return
 
+    # 진단 findings를 먼저 계산한다 — 최상단 KPI(진단 경고 건수)가 쓰므로
+    # 미리보기보다 앞에서 한 번만 계산하고 아래에서 재사용한다.
+    from core.diagnostics import diagnose, reference_distribution_from_records
+    panel_ref = None
+    if store.get("persona_source") == "nemotron":
+        try:
+            panel_ref = reference_distribution_from_records(load_nemotron_extract())
+        except ValueError:
+            panel_ref = None  # 발췌본 로드 실패 시 패널 진단은 생략
+    findings = diagnose(df, store.get("questions") or [], panel_reference=panel_ref)
+    # 진단 결과를 스토어에 저장 (엑셀 다운로드에서 사용)
+    store.set("diagnostics", findings)
+
+    # 핵심 지표 KPI (최상단)
+    _render_results_kpi(df, findings, store.get("questions") or [])
+
     meta = store.get("gen_meta") or {}
+    st.caption(SYNTH_LABEL + " 생성 정보는 합성 응답 생성 기록입니다.")
     with st.container(border=True, key="results_summary"):
         cols = st.columns([3 if k == "모델" else 2 if k == "생성일시" else 1 for k in meta] or [1])
         for i, (k, v) in enumerate(meta.items()):
@@ -2531,33 +2718,62 @@ def step5():
                 st.write(str(v))
 
     st.subheader("데이터 미리보기")
+    st.caption(SYNTH_LABEL + " 아래 표는 합성 응답 데이터입니다.")
     preview_df = df.copy()
     preview_df.index = pd.RangeIndex(start=1, stop=len(preview_df) + 1)
     st.dataframe(preview_df, use_container_width=True, height=400)
 
     # 파일럿 진단 리포트 (규칙 기반 — 실제 데이터 통계만 사용, 환각 없음)
-    from core.diagnostics import diagnose, reference_distribution_from_records
+    # findings는 위에서 이미 계산해 두었고, 여기서는 표시만 한다.
     st.subheader("파일럿 진단 리포트")
-    st.caption("실제 응답 데이터에서 계산된 통계에만 근거합니다. 임계값을 넘지 않은 문제는 보고하지 않습니다.")
-    panel_ref = None
-    if store.get("persona_source") == "nemotron":
-        try:
-            panel_ref = reference_distribution_from_records(load_nemotron_extract())
-        except ValueError:
-            panel_ref = None  # 발췌본 로드 실패 시 패널 진단은 생략
-    findings = diagnose(df, store.get("questions") or [], panel_reference=panel_ref)
+    st.caption(SYNTH_LABEL + " 실제 응답 데이터에서 계산된 통계에만 근거합니다. 임계값을 넘지 않은 문제는 보고하지 않습니다.")
     if not findings:
         st.success("진단 결과: 문제가 발견되지 않았습니다. 설문지가 정상적으로 작동합니다.")
     else:
+        # 근거 연결: finding의 '문항'(문항 텍스트)에서 문항 ID를 역조회해 함께 표시한다.
+        # findings는 문항 단위 집계라 응답자별 ID는 존재하지 않으므로, 응답 ID는 표시하지 않는다.
+        _qid_by_text = {q.get("text"): q.get("id") for q in (store.get("questions") or [])}
         for f in findings:
-            severity_icon = "🔴" if f["심각도"] == "높음" else "🟡"
             with st.container(border=True):
-                st.write(f"{severity_icon} **{f['문제']}**")
-                st.write(f"문항: {f['문항']}")
+                st.caption(SYNTH_LABEL)
+                st.write(f"**[{f['심각도']}] {f['문제']}**")
+                _qid = _qid_by_text.get(f["문항"])
+                if _qid:
+                    st.write(f"문항: {f['문항']} (문항 ID: {_qid})")
+                else:
+                    st.write(f"문항: {f['문항']}")
                 st.write(f"근거: {f['근거']}")
-                st.info(f"💡 해결책: {f['해결책']}")
-    # 진단 결과를 스토어에 저장 (엑셀 다운로드에서 사용)
-    store.set("diagnostics", findings)
+                if _qid:
+                    st.info(f"이 문항은 이렇게 고치세요: {f['해결책']}")
+                else:
+                    st.info(f"이렇게 고치세요: {f['해결책']}")
+
+    # 개선된 설문지 초안 DOCX 다운로드 (Phase 2 워커 A·B 인터페이스).
+    # 생성 버튼과 분리된 별도 동작이다. ExportService.to_improved_questionnaire_docx
+    # (워커 B가 services.py에 추가)가 없으면 안내만 표시하고 넘어간다.
+    st.subheader("개선된 설문지 초안")
+    st.caption(SYNTH_LABEL + " 진단 결과를 반영해 고친 설문지 초안입니다.")
+    st.caption(
+        "재테스트 안내: 수정 후 1단계로 돌아가 문항을 고치고 다시 생성하면 "
+        "2회차 결과를 비교할 수 있습니다."
+    )
+    if not findings:
+        st.info("진단에서 발견된 문제가 없어 개선 초안을 만들지 않았습니다.")
+    elif not hasattr(export_service, "to_improved_questionnaire_docx"):
+        st.info("개선된 설문지 초안 다운로드는 준비 중입니다. (서비스 업데이트 후 제공됩니다.)")
+    else:
+        try:
+            _improved_docx = export_service.to_improved_questionnaire_docx(
+                store.get("questions") or [], findings
+            )
+            st.download_button(
+                "개선된 설문지 초안 DOCX 다운로드",
+                data=_improved_docx,
+                file_name="개선된_설문지_초안.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        except Exception as _docx_exc:
+            st.error(f"개선 초안 생성 실패: {_docx_exc}")
 
     # 생성 분포 vs 학습 분포 비교
     learned = store.get("learned") or {}
@@ -2567,6 +2783,7 @@ def step5():
     ]
     if comp_qs:
         st.subheader("분포 비교 (생성 vs 학습)")
+        st.caption(SYNTH_LABEL + " 생성 분포와 학습 분포를 합성 응답 데이터로 비교합니다.")
         for q in comp_qs:
             with st.container(border=True):
                 st.write(f"**{_escape_markdown_label(q_service.question_summary(q))}**")
@@ -2583,6 +2800,7 @@ def step5():
                 st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("다운로드")
+    st.caption(SYNTH_LABEL + " 다운로드되는 파일은 합성 응답 데이터입니다. 실제 응답이 아닙니다.")
     c1, c2, c3 = st.columns(3)
     with c1:
         xlsx = export_service.to_excel_bytes(
@@ -2628,7 +2846,7 @@ def step5():
 def _render_workflow_guide():
     """작업 순서 가이드 (UX 개선 ③). 실제 완료 기준으로 체크 표시를 보여준다.
 
-    항목은 스테퍼·주 메뉴와 같은 _step_completion() 판정을 써서 표기가
+    항목은 스테퍼와 같은 _step_completion() 판정을 써서 표기가
     어긋나지 않는다 (B-3). '프로젝트를 먼저 만들어야…' 문구는 프로젝트가
     없을 때만, 프로젝트가 있는데 미저장이면 미저장 안내를 보여준다 (B-4).
     """
@@ -2638,8 +2856,8 @@ def _render_workflow_guide():
     items = [
         ("1. 프로젝트 만들기", has_project),
         ("2. 설문 설계", done.get(1, False)),
-        ("3. 페르소나 설계", done.get(2, False)),
-        ("4. 분포 학습 (선택)", done.get(3, False)),
+        ("3. 응답자 구성", done.get(2, False)),
+        ("4. 실측 응답 학습(선택)", done.get(3, False)),
         ("5. 가상 응답 생성", done.get(4, False)),
         ("6. 저장", saved),
     ]
@@ -2659,10 +2877,12 @@ def _render_save_status():
     if _is_current_state_saved():
         at = st.session_state.get("_last_saved_at") or ""
         storage = globals().get("_storage_label", "")
-        if at and st.session_state.get("_last_saved_at_kst"):
-            suffix = f" · {at} KST"
-        else:
-            suffix = f" · {at}" if at else ""
+        # B-2: 시트에서 읽어온 UTC 시각은 표시할 때만 +9시간(KST) 변환한다.
+        # 현재 세션에서 KST로 찍은 값(_last_saved_at_kst=True)은 그대로 둔다.
+        display_at = _fmt_saved_at_display(
+            at, bool(st.session_state.get("_last_saved_at_kst"))
+        )
+        suffix = f" · {display_at} KST" if display_at else ""
         suffix += f" · {storage}" if storage else ""
         st.caption(f"✅ 저장됨{suffix}")
     else:
@@ -2692,10 +2912,10 @@ def _render_leave_guard():
 # ----------------------------------------------------------------------------
 page_titles = {
     1: ("1. 설문 설계", "가상 응답을 생성할 설문 문항을 입력하세요."),
-    2: ("2. 페르소나 설계", "가상 응답자의 인구통계 분포를 설정합니다. 항목별 비율의 합은 100%여야 합니다."),
-    3: ("3. 분포 학습 (선택)", "실제 응답 엑셀을 올리면 문항별 응답 분포를 학습합니다. 건너뛰면 페르소나 기반 생성만 합니다."),
+    2: ("2. 응답자 구성", "가상 응답자의 인구통계 분포를 설정합니다. 항목별 비율의 합은 100%여야 합니다."),
+    3: ("3. 실측 응답 학습(선택)", "실제 응답 엑셀을 올리면 문항별 응답 분포를 학습합니다. 건너뛰면 페르소나 기반 생성만 합니다."),
     4: ("4. 가상 응답 생성", "AI로 가상 응답자를 생성합니다."),
-    5: ("5. 결과", ""),
+    5: ("5. 결과·진단", ""),
 }
 
 # 쿼리파라미터 ?page=product 와 show_product 세션 상태를 동기화
@@ -2728,7 +2948,7 @@ if not projects:
     st.stop()
 
 # 상단 메뉴별 페이지 분할 (페이지 상태 방식) — 현재 페이지만 본문에 렌더링한다.
-# 5개 단계 + 제품 소개 + 프로젝트 관리 + 업데이트 기록 = 8개 페이지. 스테퍼는 상단에 유지된다.
+# 5개 단계 + 모델·대표성 안내 + 프로젝트 관리 + 업데이트 기록 = 8개 페이지. 스테퍼는 상단에 유지된다.
 _step_fns = {"step1": step1, "step2": step2, "step3": step3, "step4": step4, "step5": step5}
 _current_page = store.get("page") or "step1"
 if _current_page == "projects":
